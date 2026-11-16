@@ -63,34 +63,25 @@ function placement(d,i){
  return 'P'+(i+1);
 }
 let leaderEvidence='';
-function rankField(d){return Number(d?.position??d?.rank??d?.place)}
-function runningOrder(rows){
+let observedRace, pollSequence=0;
+const arrivals=new Map();
+function runningOrder(rows,race){
  if(!rows)return rows;
- const classified=rows.filter(d=>!retired(d)),out=Array(classified.length).fill(null),used=new Set();
- const ranks=classified.map(rankField);
- const leaders=classified.map((d,i)=>raceFlag(d?.isLeader??d?.is_leader)?i:-1).filter(i=>i>=0);
- // Completed classifications take precedence over a lingering live leader flag.
- if(leaders.length===1&&!classified.some(d=>raceFlag(d?.finished))){
-   out[0]=classified[leaders[0]];used.add(leaders[0]);
- }
- classified.forEach((d,i)=>{
-   const rank=ranks[i];
-   if(!used.has(i)&&Number.isInteger(rank)&&rank>0&&rank<=out.length&&ranks.indexOf(rank)===ranks.lastIndexOf(rank)&&out[rank-1]===null){
-     out[rank-1]=d;used.add(i);
+ if(observedRace!==race){arrivals.clear();pollSequence=0;observedRace=race}
+ ++pollSequence;
+ const number=v=>v!=null&&v!==''&&Number.isFinite(+v)?+v:-1;
+ const standings=rows.map(d=>{
+   const lap=number(d?.lap??d?.currentLap??1),cp=number(d?.checkpoint??d?.currentCheckpoint??d?.checkpointIndex);
+   const finished=raceFlag(d?.finished),key=String(d?.racerId??d?.driverId??driverName(d)).toLowerCase();
+   let mark=arrivals.get(key);
+   if(!mark||mark.lap!==lap||mark.cp!==cp||mark.finished!==finished){
+     mark={lap,cp,finished,sequence:pollSequence};arrivals.set(key,mark);
    }
+   return {d,...mark};
  });
- const remaining=classified.filter((_,i)=>!used.has(i));
- const numeric=v=>v!=null&&v!==''&&Number.isFinite(Number(v))?Number(v):-1;
- const lap=d=>numeric(d?.lap??d?.currentLap);
- const cp=d=>numeric(d?.checkpoint??d?.currentCheckpoint??d?.checkpointIndex);
- const progress=d=>numeric(d?.lapProgress??d?.trackProgress??d?.progress);
- remaining.sort((a,b)=>{
-   const af=raceFlag(a?.finished),bf=raceFlag(b?.finished);
-   if(af||bf)return Number(bf)-Number(af);
-   return lap(b)-lap(a)||cp(b)-cp(a)||progress(b)-progress(a);
- });
- let cursor=0;
- return out.map(d=>d??remaining[cursor++]).concat(rows.filter(retired));
+ standings.sort((a,b)=>Number(retired(a.d))-Number(retired(b.d))||Number(b.finished)-Number(a.finished)||
+   (a.finished?0:b.lap-a.lap||b.cp-a.cp)||a.sequence-b.sequence);
+ return standings.map(row=>row.d);
 }
 function locationOnTrack(d){
  const raw=d?.lapProgress??d?.trackProgress??d?.progress;
@@ -616,13 +607,10 @@ async function render(){
  }
  const rosterKeys=['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players'];
  const order=list(detailRoster,rosterKeys)??list(detailEnvelope,rosterKeys)??list(summary,rosterKeys);
- const entries=runningOrder(order);
+ const entries=runningOrder(order,raceKey);
  drivers=entries??[];
- const first=drivers[0],active=drivers.filter(d=>!retired(d));
- const flagged=active.filter(d=>raceFlag(d?.isLeader??d?.is_leader));
- leaderEvidence=first&&flagged.length===1&&flagged[0]===first&&!active.some(d=>raceFlag(d?.finished))?'Leader flag':
- first&&rankField(first)===1&&active.filter(d=>rankField(d)===1).length===1?'Reported position':'';
- el('leaderNote').textContent=!first||retired(first)?'':leaderEvidence?'P1 confirmed by '+leaderEvidence.toLowerCase()+' · Unranked racers ordered by progress; exact ties retain feed order':'1* · Estimated leader by race progress';
+ const first=drivers[0];leaderEvidence=first?'checkpoint':'';
+ el('leaderNote').textContent=first?'Lap and checkpoint order · Same checkpoint uses first observed arrival; simultaneous updates use feed order.':'';
  paint();
  const opened=new Set([...el('order').querySelectorAll('details[open]')].map(node=>node.dataset.driver));
  el('order').replaceChildren();
