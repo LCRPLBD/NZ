@@ -9,12 +9,12 @@ header strong{font:italic 900 19px system-ui;letter-spacing:.06em}h1{letter-spac
 h2{letter-spacing:-.035em}main>article{align-items:start}nav a{color:#acbbcf}nav a[aria-current]{background:#233d40;color:#abf9e8;box-shadow:inset 3px 0 var(--ice)}
 button,select,input{border-color:#384b60;background:#202e3e;border-radius:9px}#race{min-width:min(100%,260px)}#report{overflow:hidden;margin-top:16px}#report th{color:#b7c8de;background:#1b2837;white-space:nowrap}#report tr:hover{background:#1c2937}.field{background:#1b2939;border:1px solid #314154;padding:15px}.field small{font-size:12px;letter-spacing:.03em;margin-bottom:5px}#status,#pageStatus,#mapStatus{font-size:14px}#order li:first-child{background:#1e343a;border-radius:7px}#scene{background:radial-gradient(ellipse at center,#203047,#0e1722)!important}#orbit{vertical-align:middle;accent-color:var(--ice)}
 @media(min-width:1000px){body{display:grid;grid-template-columns:210px minmax(0,1fr);grid-template-rows:auto 1fr}header{grid-column:1/-1;width:100%;max-width:none;border-bottom:1px solid var(--line);padding:18px 32px}nav{display:flex;flex-direction:column;align-self:start;position:sticky;top:12px;gap:5px;width:100%;padding:28px 15px;border:0}nav a{padding:12px 16px}main{width:100%;min-width:0;margin:0 auto;padding:26px clamp(20px,3vw,58px);border-left:1px solid var(--line);min-height:90vh}#livePage article{grid-template-columns:minmax(0,1.8fr) minmax(225px,.8fr)}#livePage article section:first-child{grid-column:2;grid-row:1}#livePage article section:last-child{grid-column:1;grid-row:1}}
-</style>
+#scene{aspect-ratio:16/9;display:block}#livePage article{display:flex;flex-direction:column}#livePage article section{width:100%}#livePage article section:last-child{order:-1}#livePage #order{columns:2} @media(max-width:650px){#livePage #order{columns:1}} </style>
 <header><strong>NIGHTZOOM</strong><button id="mode">Preview demo</button></header><nav aria-label="Racing sections" id="nav"></nav>
 <main id="livePage"><h1>Live race</h1><p role="status" id="status">Connecting to NightZoom.</p>
 <label for="race">Race</label><select id="race" disabled><option>Waiting for races</option></select>
 <article><section><h2>Running order</h2><ol id="order"></ol><p id="empty"></p></section>
-<section><h2 id="sceneTitle">3D race view</h2><p id="mapStatus" role="status"></p><button hidden id="copyRace" type="button">Copy race diagnostics</button><textarea hidden readonly id="raceDiagnosticText" aria-label="Race diagnostics"></textarea><details id="missingTrack" hidden><summary>Find this circuit</summary><p><a id="raceData" target="_blank" rel="noreferrer">Selected race data</a> · <a href="https://api.bjj-dev.net/v1/racing/tracks" target="_blank" rel="noreferrer">Track catalog</a></p><form id="bindTrack"><input id="bindId" aria-label="Track ID" placeholder="NZ-4710" required><button>Use track ID</button></form><small id="bindStatus"></small></details><canvas id="scene" width="760" height="450" style="width:100%;background:#101923;border-radius:8px" aria-label="Three-dimensional race circuit"></canvas><label>Camera angle <input id="orbit" type="range" min="-180" max="180" value="-25"></label><small id="telemetry"></small><svg style="display:none" id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
+<section><h2 id="sceneTitle">3D race view</h2><p id="mapStatus" role="status"></p><button hidden id="copyRace" type="button">Copy race diagnostics</button><textarea hidden readonly id="raceDiagnosticText" aria-label="Race diagnostics"></textarea><details id="missingTrack" hidden><summary>Find this circuit</summary><p><a id="raceData" target="_blank" rel="noreferrer">Selected race data</a> · <a href="https://api.bjj-dev.net/v1/racing/tracks" target="_blank" rel="noreferrer">Track catalog</a></p><form id="bindTrack"><input id="bindId" aria-label="Track ID" placeholder="NZ-4710" required><button>Use track ID</button></form><small id="bindStatus"></small></details><canvas id="scene" width="1280" height="720" style="width:100%;background:#101923;border-radius:8px" aria-label="Three-dimensional race circuit"></canvas><label>Camera angle <input id="orbit" type="range" min="-180" max="180" value="-25"></label><small id="telemetry"></small><svg style="display:none" id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
 <main id="other" hidden><h1 id="title"></h1><div id="rail"><button id="reload">Refresh</button><span id="pageStatus" role="status"></span></div><form id="query" hidden><input id="identifier" required><button id="submitLookup">Open</button></form><section id="report"></section></main><script>
 const el=id=>document.getElementById(id);
 const api='https://api.bjj-dev.net/v1/racing/';
@@ -39,18 +39,35 @@ function locationOnTrack(d){
  const index=d?.checkpointIndex??(Number(d?.currentCheckpoint??d?.checkpoint)-1);
  return checkpoints[index];
 }
+function roundRoute(points,loop){
+ const base=loop?points.slice(0,-1):points;
+ if(base.length<3)return points;
+ const out=[];
+ for(let i=0;i<base.length;i++){
+   const b=base[i];
+   if(!loop&&(i===0||i===base.length-1)){out.push(b);continue}
+   const a=base[(i+base.length-1)%base.length],d=base[(i+1)%base.length];
+   const ab=Math.hypot(a[0]-b[0],a[1]-b[1]),bd=Math.hypot(d[0]-b[0],d[1]-b[1]);
+   const trim=Math.min(ab*.24,bd*.24,12);
+   const start=b.map((v,k)=>v+(a[k]-v)*trim/ab),end=b.map((v,k)=>v+(d[k]-v)*trim/bd);
+   for(let j=0;j<=4;j++){const t=j/4;out.push(b.map((v,k)=>(1-t)**2*start[k]+2*t*(1-t)*v+t*t*end[k]))}
+ }
+ if(loop)out.push(out[0]);
+ return out.filter((p,i)=>!i||Math.hypot(p[0]-out[i-1][0],p[1]-out[i-1][1])>1e-7);
+}
 function paint(){
- const c=el('scene').getContext('2d'); c.clearRect(0,0,760,450);
+ const c=el('scene').getContext('2d'); c.clearRect(0,0,1280,720);
  if(route.length<2){el('telemetry').textContent=drivers.length?'Waiting for circuit geometry.':'';return}
  const a=Number(el('orbit').value)*Math.PI/180,cs=Math.cos(a),sn=Math.sin(a);
  const xs=route.map(p=>p[0]),ys=route.map(p=>p[1]);
  const bounds=values=>values.reduce(([lo,hi],v)=>[Math.min(lo,v),Math.max(hi,v)],[Infinity,-Infinity]);
  const [xmin,xmax]=bounds(xs),[ymin,ymax]=bounds(ys),cx=(xmin+xmax)/2,cy=(ymin+ymax)/2;
- const scale=570/Math.max(1,Math.hypot(xmax-xmin,ymax-ymin)),faces=[];
+ const rotated=route.map(([x,y])=>[(x-cx)*cs-(y-cy)*sn,(x-cx)*sn+(y-cy)*cs]);
+ const [left,right]=bounds(rotated.map(p=>p[0])),[back,front]=bounds(rotated.map(p=>p[1]));
+ const scale=Math.min(1200/Math.max(1,right-left),625/Math.max(1,(front-back)*.70)),faces=[];
  function project([x,y,z]){
-   x=(x-cx)*scale;y=(y-cy)*scale;
-   const lateral=x*cs-y*sn,depth=x*sn+y*cs, factor=1000/(1000+depth*.8-z*.6);
-   return [380+lateral*factor,225-(depth*.55+z*.83)*factor,depth*.83-z*.55];
+   const dx=x-cx,dy=y-cy,lateral=dx*cs-dy*sn,depth=dx*sn+dy*cs;
+   return [640+(lateral-(left+right)/2)*scale,372-(depth-(back+front)/2)*.70*scale-z*.72,depth*scale*.72-z*.70];
  }
  function face(points,color){const p=points.map(project);faces.push({p,color,d:p.reduce((s,q)=>s+q[2],0)/p.length})}
  const segments=[];let length=0;
@@ -95,7 +112,7 @@ function paint(){
  }
  for(const {p,color} of faces.sort((a,b)=>b.d-a.d)){c.fillStyle=color;c.beginPath();p.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();c.fill()}
  c.font='bold 12px system-ui';const occupied=[];
- for(const {p,text} of labels){const width=c.measureText(text).width+10,x=Math.min(756-width,Math.max(3,p[0]-width/2));let y=Math.max(19,p[1]-4);
+ for(const {p,text} of labels){const width=c.measureText(text).width+10,x=Math.min(1276-width,Math.max(3,p[0]-width/2));let y=Math.max(19,p[1]-4);
  while(occupied.some(b=>x<b.x+b.width&&x+width>b.x&&Math.abs(b.y-y)<17)&&y>20)y-=17;
  occupied.push({x,y,width});c.fillStyle='#101927';c.fillRect(x,y-14,width,16);c.fillStyle='#ecfff9';c.fillText(text,x+5,y-2)}
  el('telemetry').textContent=count?count+' cars positioned on track':'Track only · racer progress unavailable';
@@ -117,6 +134,7 @@ async function draw(id){
  closed=!!graph.loop;checkpoints=Array.isArray(graph.checkpointAt)?graph.checkpointAt:[];
  if(route.length<2)throw Error('Track has no distinct points');
  if(closed&&(route[0][0]!==route.at(-1)[0]||route[0][1]!==route.at(-1)[1]))route.push(route[0]);
+ route=roundRoute(route,closed);
  paint();
  el('outline').setAttribute('d',points.map(([x,y],i)=>(i?'L':'M')+x+' '+(1000-y)).join(' ')+(graph.loop?' Z':''));
  el('mapStatus').textContent=id+(graph.loop?' · Circuit':' · Point to point');
