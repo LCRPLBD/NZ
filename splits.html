@@ -1,7 +1,11 @@
 <!doctype html><meta charset="utf-8"><title>Neptune · race splits</title><style>
 *{box-sizing:border-box}body{margin:0;color:#f6f5fb;background:transparent;font:500 15px/1.25 system-ui,sans-serif}article{width:min(324px,98vw);margin:4px;padding:8px 11px;background:transparent;text-shadow:0 1px 2px #000,0 0 3px #000}header{display:flex;align-items:baseline;gap:6px;padding-bottom:5px;color:#c6bdd7;font-size:11px}header b{color:white;font-size:12px}#title{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}#page{margin-left:auto;white-space:nowrap}#rows>div{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:baseline;gap:8px;padding:4px 0}#rows b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}strong,small{font-variant-numeric:tabular-nums}strong{font-size:14px;font-weight:600}small{color:#bdb9cb;font-size:10px}.ahead{color:#97e6d4}.behind{color:#ffbdab}small:empty{display:none}
-</style><article id="card" hidden><header><b>Neptune splits</b><span aria-hidden="true">·</span><span id="title"></span><span id="page"></span></header><section id="rows"></section></article><script>
+</style><article id="card" hidden><header><b id="heading">Neptune splits</b><span aria-hidden="true">·</span><span id="title"></span><span id="page"></span></header><section id="rows"></section></article><script>
 const el=id=>document.getElementById(id),api='https://api.bjj-dev.net/v1/racing/',demo=new URLSearchParams(location.search).get('demo')==='1';
+const params=new URLSearchParams(location.search);
+const username=params.get('name')?.trim() || [...params].find(([k,v])=>k && k!=='demo' && !v)?.[0].trim() || 'Neptune';
+el('heading').textContent=username+' splits';
+document.title=username+' · race splits';
 function driverName(d){return typeof d==='string'?d:d?.driverName??d?.racer_name??d?.characterName??d?.displayName??d?.racerName??d?.name??d?.alias??'Unnamed racer'}
 function racerTitle(d){
  const name=driverName(d);
@@ -13,7 +17,7 @@ function racerTitle(d){
 
 function array(x,keys){if(Array.isArray(x))return x;for(const k of keys)if(Array.isArray(x?.[k]))return x[k];return []}
 const roster=r=>array(r,['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players']);
-const mine=d=>driverName(d).trim().toLowerCase()==='neptune';
+const mine=d=>driverName(d).trim().toLowerCase()===username.toLowerCase();
 async function read(path){const r=await fetch(api+path,{cache:'no-store',signal:AbortSignal.timeout(6000)});if(!r.ok)throw Error(String(r.status));const j=await r.json();return j.data??j}
 
 let previous=null,active=null,history=new Map(),since=0;
@@ -89,17 +93,30 @@ function update(id,title,rows,now){
  if(!rivals.length)box.textContent='Waiting for opponents';
  el('card').hidden=false;
 }
-async function poll(){try{
+let tracked=null;
+async function poll(){let delay=5000;try{
+ if(tracked){
+   try{
+     const data=await read('live/'+encodeURIComponent(previous));
+     const detail=data.race??data.races?.[0]??(Array.isArray(data)?data[0]:data);
+     const rows=roster(detail).length?roster(detail):roster(data);
+     if(rows.some(d=>mine(d)&&!retired(d))){
+       update(previous,tracked,rows,Date.now());delay=1000;return;
+     }
+   }catch(error){if(error.message!=='404')throw error}
+   tracked=null;
+ }
  const races=array(await read('live'),['races','live','activeRaces']),id=r=>r.raceId??r.race_id??r.id;
  for(const summary of races.slice().sort((a,b)=>Number(id(b)===previous)-Number(id(a)===previous))){
- let r=summary,rows=roster(r);if(id(r)!=null){try{const data=await read('live/'+encodeURIComponent(id(r))),detail=data.race??data.races?.[0]??(Array.isArray(data)?data[0]:data);r={...summary,...detail};const fromDetail=roster(detail);if(fromDetail.length)rows=fromDetail;else if(roster(data).length)rows=roster(data)}catch{}}
- if(!rows.some(mine))continue;previous=id(summary);
+ let r=summary,rows=roster(r);if(id(r)!=null){try{const data=await read('live/'+encodeURIComponent(id(r))),detail=data.race??data.races?.[0]??(Array.isArray(data)?data[0]:data);r={...summary,...detail};const fromDetail=roster(detail);if(fromDetail.length)rows=fromDetail;else if(roster(data).length)rows=roster(data)}catch(error){if(error.message==="429")throw error}}
+ if(!rows.some(d=>mine(d)&&!retired(d)))continue;previous=id(summary);
+ if(previous!=null)tracked=r.trackName??r.track?.name??r.name??"NightZoom";delay=1000;
  update(previous??r.trackName,r.trackName??r.track?.name??r.name??'NightZoom',rows,Date.now());return;
  }
  active=null;el('card').hidden=true;
- }catch{el('card').hidden=true}finally{setTimeout(poll,5000)}}
+ }catch(error){el('card').hidden=true;if(error.message==="429")delay=15000}finally{setTimeout(poll,delay)}}
 if(demo){
- const names=['Neptune','CHROME','Runner','Maido','hypno'];
+ const names=[username,...['CHROME','Runner','Maido','hypno','Concrete'].filter(n=>n.toLowerCase()!==username.toLowerCase()).slice(0,4)];
  const frame=(c,t)=>update('demo','Supersonic',names.map((name,i)=>({name,crewTag:i===1?'AWD':'',lap:1,checkpoint:c[i]})),t);
  frame([20,20,20,20,20],1000);frame([20,21,20,20,20],6000);frame([21,22,20,21,20],11000);frame([22,23,21,21,20],16000);
 }else poll();</script>
