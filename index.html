@@ -51,7 +51,29 @@ function racerTitle(d){
  if(!tag||name.startsWith('['+tag+'] '))return name;
  return '['+tag+'] '+name;
 }
-function placement(d,i){const p=Number(d?.position??d?.rank??d?.place);return Number.isInteger(p)&&p>0?p:i+1}
+function raceFlag(value){return value===true||value===1||value==='true'}
+function retired(d){return raceFlag(d?.dnf)}
+function placement(d,i){return retired(d)?'DNF':'P'+(i+1)}
+function rankField(d){return Number(d?.position??d?.rank??d?.place)}
+function runningOrder(rows){
+ if(!rows)return rows;
+ const classified=rows.filter(d=>!retired(d)),out=Array(classified.length).fill(null),used=new Set();
+ const ranks=classified.map(rankField);
+ const leaders=classified.map((d,i)=>raceFlag(d?.isLeader??d?.is_leader)?i:-1).filter(i=>i>=0);
+ const complete=ranks.every(p=>Number.isInteger(p)&&p>=1&&p<=out.length)&&new Set(ranks).size===out.length;
+ // Completed classifications take precedence over a lingering live leader flag.
+ if(!complete&&leaders.length===1&&!classified.some(d=>raceFlag(d?.finished))){
+   out[0]=classified[leaders[0]];used.add(leaders[0]);
+ }
+ classified.forEach((d,i)=>{
+   const rank=ranks[i];
+   if(!used.has(i)&&Number.isInteger(rank)&&rank>0&&rank<=out.length&&ranks.indexOf(rank)===ranks.lastIndexOf(rank)&&out[rank-1]===null){
+     out[rank-1]=d;used.add(i);
+   }
+ });
+ const remaining=classified.filter((_,i)=>!used.has(i));let cursor=0;
+ return out.map(d=>d??remaining[cursor++]).concat(rows.filter(retired));
+}
 function locationOnTrack(d){
  const raw=d?.lapProgress??d?.trackProgress??d?.progress;
  if(raw!=null&&raw!==''&&Number.isFinite(+raw)&&+raw>=0&&+raw<=1)return +raw;
@@ -164,7 +186,7 @@ function paint(){
      for(let j=0;j<4;j++){const k=(j+1)%4;face([low[j],low[k],high[k],high[j]],color)}
      face(high,color);
    }
-   box(7,3.7,1,4,['#a998ff','#72e9cf','#ffae66','#e782ba'][i%4]);box(3.5,2.9,4,7,'#a2bfd0');labels.push({p:project(point(0,0,10)),text:'P'+placement(d,i)+' '+racerTitle(d)});count++;
+   box(7,3.7,1,4,['#a998ff','#72e9cf','#ffae66','#e782ba'][i%4]);box(3.5,2.9,4,7,'#a2bfd0');labels.push({p:project(point(0,0,10)),text:placement(d,i)+' '+racerTitle(d)});count++;
  }
  for(const {p,color} of faces.sort((a,b)=>b.d-a.d)){c.fillStyle=color;c.beginPath();p.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();c.fill()}
  c.font='bold 12px system-ui';const occupied=[];
@@ -274,14 +296,14 @@ async function render(){
  }
  const rosterKeys=['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players'];
  const order=list(race,rosterKeys);
- const entries=order;
+ const entries=runningOrder(order);
  drivers=entries??[];paint();
  const opened=new Set([...el('order').querySelectorAll('details[open]')].map(node=>node.dataset.driver));
  el('order').replaceChildren();
  el('empty').textContent=!race?'Waiting for a live race.':!entries?'Running order unavailable for this response.':entries.length?'':'Waiting for the starting order.';
  for(const [index,driver] of drivers.entries()){
    const row=element('li'),name=driverName(driver),rank=placement(driver,index);
-   const heading=element('strong',racerTitle(driver)),badge=element('span','P'+rank);badge.className='rank';
+   const heading=element('strong',racerTitle(driver)),badge=element('span',rank);badge.className='rank';
    const card=element('div');card.className='driverCard';row.append(badge,card);card.append(heading);
    if(driver&&typeof driver==='object'){
      const key=JSON.stringify([raceKey,driver.racerId??driver.driverId??driver.id??name]);
