@@ -177,24 +177,50 @@ function packWindow(fractions,loop){
  }
  return pool.slice(best,best+size).map(x=>x>1?x-1:x);
 }
-const preferredLane=new Map();
+const trafficState=new Map();
+let trafficAnimating=false;
 function trafficLayout(values,ids,loop,gap){
- const slots=[-.64,0,.64],occupied=slots.map(()=>[]),out=Array(values.length);
- const wrap=v=>loop?((v%1)+1)%1:v;
- const distance=(a,b)=>{const d=Math.abs(a-b);return loop?Math.min(d,1-d):d};
- values.map((v,i)=>({v,i})).filter(r=>Number.isFinite(r.v)).sort((a,b)=>b.v-a.v||a.i-b.i).forEach(({v,i})=>{
-   const key=ids[i],preferred=preferredLane.get(key)??1;
-   const choices=[preferred,...[1,0,2].filter(n=>n!==preferred)];
-   for(let step=0;step<=values.length+1;step++){
-     let p=wrap(v-step*gap*1.01);
-     if(!loop&&p<0)p=v+step*gap*1.01;
-     if(p>1)continue;
-     const lane=choices.find(l=>occupied[l].every(other=>distance(other,p)>=gap));
-     if(lane===undefined)continue;
-     occupied[lane].push(p);preferredLane.set(key,lane);out[i]={p,lane:slots[lane]};break;
-   }
-   if(!out[i])out[i]={p:wrap(v),lane:slots[preferred]};
- });
+ const now=performance.now(),out=Array(values.length);
+ const racers=values.map((p,i)=>({p,i,id:ids[i]})).filter(r=>Number.isFinite(r.p));
+ const targets=new Map(),previous=new Map([...trafficState].map(([id,s])=>[id,s.rank]));
+ // Split a circuit queue at its largest empty stretch so it can cross the finish line.
+ const sorted=[...racers].sort((a,b)=>b.p-a.p||a.i-b.i);
+ if(loop&&sorted.length>1){
+   let widest=-1,start=0;
+   sorted.forEach((r,i)=>{const n=(i+1)%sorted.length,space=r.p-sorted[n].p+(n===0?1:0);if(space>widest){widest=space;start=n}});
+   sorted.push(...sorted.splice(0,start));
+ }
+ gap=Math.min(gap,.95/Math.max(1,sorted.length));
+ let ceiling=Infinity,prior=Infinity,offset=0;
+ for(const r of sorted){
+   if(loop&&r.p>prior)offset--;
+   const target=Math.min(r.p+offset,ceiling);
+   targets.set(r.id,target);ceiling=target-gap;prior=r.p;
+ }
+ if(!loop&&sorted.length){
+   let floor=0;
+   for(const r of [...sorted].reverse()){const p=Math.max(floor,targets.get(r.id));targets.set(r.id,p);floor=p+gap}
+ }
+ trafficAnimating=false;
+ for(const r of racers){
+   const target=targets.get(r.id);
+   let s=trafficState.get(r.id);
+   if(!s)s={p:target,time:now,pass:-Infinity,rank:r.i};
+   let diff=target-s.p;
+   if(loop)diff-=Math.round(diff);
+   const gained=previous.has(r.id)&&racers.some(other=>previous.has(other.id)&&previous.get(other.id)<previous.get(r.id)&&other.i>r.i);
+   if(gained)s.pass=now;
+   const phase=Math.min(1,(now-s.pass)/1250);
+   const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+   const lane=reduced||phase>=1?0:.78*Math.sin(Math.PI*phase)**2;
+   const dt=Math.min(100,Math.max(1,now-s.time));
+   const rate=phase<.25?900:phase<.8?180:360;
+   s.p+=diff*(reduced?1:1-Math.exp(-dt/rate));
+   s.rank=r.i;s.time=now;trafficState.set(r.id,s);
+   out[r.i]={p:loop?((s.p%1)+1)%1:s.p,lane};
+   if(!reduced&&(phase<1||Math.abs(diff)>.000015))trafficAnimating=true;
+ }
+ const present=new Set(racers.map(r=>r.id));for(const id of trafficState.keys())if(!present.has(id))trafficState.delete(id);
  return out;
 }
 let sunsetSky,chaseDriver=null;
@@ -339,7 +365,7 @@ function paint(){
  for(const key of motion.keys())if(!seen.has(key))motion.delete(key);
  if(el('cameraMode').value==='chase'){
    sunsetChase(c,positions);cameraTick=now;
-   if(moving&&!el('livePage').hidden)cameraFrame=requestAnimationFrame(paint);
+   if((moving||trafficAnimating)&&!el('livePage').hidden)cameraFrame=requestAnimationFrame(paint);
    return;
  }
  const xs=route.map(p=>p[0]),ys=route.map(p=>p[1]);
@@ -405,6 +431,7 @@ function paint(){
  const at=pos-s.start;face([s.point(at,-7,.3),s.point(at+1/scale,-7,.3),s.point(at+1/scale,7,.3),s.point(at,7,.3)],'#cfbbff')}
  let count=0;
  const overheadTraffic=trafficLayout(positions,drivers.map(racerTitle),closed,Math.min(.04,16/(scale*length)));
+ if(trafficAnimating&&!el('livePage').hidden){cancelAnimationFrame(cameraFrame);cameraFrame=requestAnimationFrame(paint)}
  for(const [i,d] of drivers.entries()){
    const fraction=overheadTraffic[i]?.p;
    if(typeof fraction!=='number'||fraction<0||fraction>1)continue;
@@ -428,7 +455,7 @@ function paint(){
 el('cameraMode').onchange=paint;
 el('orbit').oninput=paint;
 async function draw(id){
- timingTrack=id;preferredLane.clear();chaseDriver=null;route=[];motion.clear();cameraPose=null;paint();
+ timingTrack=id;trafficState.clear();chaseDriver=null;route=[];motion.clear();cameraPose=null;paint();
  const ticket=++mapVersion;
  el('outline').removeAttribute('d');
  el('mapStatus').textContent=id?'Loading map.':'Enter a track ID to view its route.';
