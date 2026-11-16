@@ -31,6 +31,15 @@ function list(value,keys){
  return null;
 }
 let route=[],drivers=[],checkpoints=[],closed=false;
+function vehicleLabel(d){
+ const model=v=>typeof v==='string'&&v.trim()?v.trim():null;
+ for(const v of [d?.vehicleName,d?.carName,d?.vehicleModel,d?.carModel,d?.vehicle,d?.car,d?.model]){
+   for(const candidate of [v?.displayName,v?.label,v?.name,v?.model?.name,v?.model,v]){
+     const name=model(candidate);if(name)return name;
+   }
+ }
+ return 'Not reported';
+}
 function driverName(d){return typeof d==='string'?d:d?.driverName??d?.racer_name??d?.characterName??d?.displayName??d?.racerName??d?.name??d?.alias??'Unnamed racer'}
 function placement(d,i){const p=Number(d?.position??d?.rank??d?.place);return Number.isInteger(p)&&p>0?p:i+1}
 function locationOnTrack(d){
@@ -223,11 +232,11 @@ async function render(){
  for(const [index,driver] of drivers.entries()){
    const row=element('li'),name=driverName(driver),rank=placement(driver,index);
    const heading=element('strong',name),badge=element('span','P'+rank);badge.className='rank';
-   const card=element('div');card.className='driverCard';row.append(badge,card);card.append(heading);
+   const card=element('div');card.className='driverCard';row.append(badge,card);card.append(heading,element("div","Car · "+vehicleLabel(driver)));
    if(driver&&typeof driver==='object'){
      const key=JSON.stringify([raceKey,driver.racerId??driver.driverId??driver.id??name]);
      const highlights=element('div');highlights.className='driverMetrics';
-     for(const [title,aliases] of [['Lap',['lap','currentLap']],['Checkpoint',['currentCheckpoint','checkpoint','checkpointIndex']],['Car',['vehicleName','carName','vehicle','car']],['Class',['vehicleClass','class']],['Gap',['gapToLeader','gap']],['Best lap',['bestLapTime','bestLap']],['Last lap',['lastLapTime','lastLap']],['Speed',['speedKmh','speedMph','speed']]]){
+     for(const [title,aliases] of [['Lap',['lap','currentLap']],['Checkpoint',['currentCheckpoint','checkpoint','checkpointIndex']],['Class',['vehicleClass','class']],['Gap',['gapToLeader','gap']],['Best lap',['bestLapTime','bestLap']],['Last lap',['lastLapTime','lastLap']],['Speed',['speedKmh','speedMph','speed']]]){
        const field=aliases.find(k=>driver[k]!=null&&driver[k]!==''&&typeof driver[k]!=='object');
        if(field){const unit=field==='speedKmh'?' km/h':field==='speedMph'?' mph':'';highlights.append(element('span',title+' · '+driver[field]+unit))}
      }
