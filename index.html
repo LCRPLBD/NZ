@@ -257,14 +257,16 @@ function sunsetChase(c,positions){
  if(focus>=0)chaseDriver=racerTitle(drivers[focus]);
  if(focus<0){el('telemetry').textContent='Waiting for racer positions.';return}
  const dist=[0];for(let i=1;i<route.length;i++)dist.push(dist[i-1]+Math.hypot(route[i][0]-route[i-1][0],route[i][1]-route[i-1][1]));
- const total=dist.at(-1),unit=total/850;
+ // Keep the road width fixed while stretching travel between timing gates.
+ const roadUnits=Math.max(5100,120*Math.max(1,checkpoints.length-1));
+ const total=dist.at(-1),unit=total/roadUnits;
  function point(s){
    if(closed)s=((s%total)+total)%total;
    let lo=1,hi=dist.length-1;while(lo<hi){const m=(lo+hi)>>1;if(dist[m]<s)lo=m+1;else hi=m}
    const a=route[lo-1],b=route[lo],t=(s-dist[lo-1])/(dist[lo]-dist[lo-1]);
    return a.map((v,k)=>v+(b[k]-v)*t);
  }
- const traffic=trafficLayout(positions,drivers.map(racerTitle),closed,.005);
+ const traffic=trafficLayout(positions,drivers.map(racerTitle),closed,4.25/roadUnits);
  if(!traffic[focus])return;
  const s=traffic[focus].p*total,origin=point(s),ahead=point(s+unit*2);
  const dx=ahead[0]-origin[0],dy=ahead[1]-origin[1],len=Math.hypot(dx,dy)||1;
@@ -286,7 +288,7 @@ function sunsetChase(c,positions){
  }
  const palms=[],segments=[],roadIndex=Math.floor(s/unit);
  for(let i=-18;i<=180;i++){
-   const k=roadIndex+i;if(!closed&&(k<0||k>=850))continue;
+   const k=roadIndex+i;if(!closed&&(k<0||k>=roadUnits))continue;
    const left=cameraPoint(k*unit,-1),right=cameraPoint(k*unit,1);
    const nextLeft=cameraPoint((k+1)*unit,-1),nextRight=cameraPoint((k+1)*unit,1);
    if(Math.max(left.z,right.z,nextLeft.z,nextRight.z)<2)continue;
