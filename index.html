@@ -177,6 +177,25 @@ function packWindow(fractions,loop){
  }
  return pool.slice(best,best+size).map(x=>x>1?x-1:x);
 }
+const preferredLane=new Map();
+function trafficLayout(values,ids,loop,gap){
+ const slots=[-.64,0,.64],occupied=slots.map(()=>[]),out=Array(values.length);
+ const wrap=v=>loop?((v%1)+1)%1:v;
+ const distance=(a,b)=>{const d=Math.abs(a-b);return loop?Math.min(d,1-d):d};
+ values.map((v,i)=>({v,i})).filter(r=>Number.isFinite(r.v)).sort((a,b)=>b.v-a.v||a.i-b.i).forEach(({v,i})=>{
+   const key=ids[i],preferred=preferredLane.get(key)??1;
+   const choices=[preferred,...[1,0,2].filter(n=>n!==preferred)];
+   for(let step=0;step<=values.length+1;step++){
+     let p=wrap(v-step*gap*1.01);
+     if(!loop&&p<0)p=v+step*gap*1.01;
+     if(p>1)continue;
+     const lane=choices.find(l=>occupied[l].every(other=>distance(other,p)>=gap));
+     if(lane===undefined)continue;
+     occupied[lane].push(p);preferredLane.set(key,lane);out[i]={p,lane:slots[lane]};break;
+   }
+ });
+ return out;
+}
 let sunsetSky;
 function chaseSky(){
  const layer=document.createElement('canvas');layer.width=1280;layer.height=720;
@@ -207,12 +226,14 @@ function sunsetChase(c,positions){
    const a=route[lo-1],b=route[lo],t=(s-dist[lo-1])/(dist[lo]-dist[lo-1]);
    return a.map((v,k)=>v+(b[k]-v)*t);
  }
- const s=positions[focus]*total,origin=point(s),ahead=point(s+unit*2);
+ const traffic=trafficLayout(positions,drivers.map(racerTitle),closed,.005);
+ if(!traffic[focus])return;
+ const s=traffic[focus].p*total,origin=point(s),ahead=point(s+unit*2);
  const dx=ahead[0]-origin[0],dy=ahead[1]-origin[1],len=Math.hypot(dx,dy)||1;
  function sample(at){
    const p=point(at),x=(p[0]-origin[0])/unit,y=(p[1]-origin[1])/unit;
-   const z=14+(x*dx+y*dy)/len;
-   return {x:640+530*(x*dy-y*dx)/(len*z),y:398+2100/z,w:2250/z,z};
+   const z=11+(x*dx+y*dy)/len;
+   return {x:640+530*(x*dy-y*dx)/(len*z),y:398+1770/z,w:3150/z,z};
  }
  const palms=[];
  const roadIndex=Math.floor(s/unit);
@@ -224,7 +245,14 @@ function sunsetChase(c,positions){
    strip(-1.1,1.1,'#51324e');strip(-1,1,'hsl(244 27% '+(38-23*fog)+'%)');
    strip(-.97,-.90,'rgba(245,94,181,.13)');strip(.90,.97,'rgba(100,222,255,.15)');
    if(k%17===0){const side=(Math.abs(k/17)%2?1:-1);palms.push({x:a.x+side*a.w*1.4,y:a.y,size:1000/a.z,side})}
-   if(k%6===0){strip(-1.07,-1.01,'#ff87bb');strip(1.01,1.07,'#99f9ff')}
+   if(a.z<60){
+     for(const side of [-1,1]){
+       const t=side*(1.13+(Math.abs(k)%3)*.10);
+       strip(t,t+.021,side<0?'#be64ab':'#60b6bc');
+     }
+     if(k%3===0){strip(-.61,-.59,'#746181');strip(.59,.61,'#746181')}
+   }
+   if(k%3===0){strip(-1.07,-1.01,'#ff87bb');strip(1.01,1.07,'#99f9ff')}
    strip(-1,-.975,'#ff68c5');strip(.975,1,'#8bf0fb');
    if(Math.floor(s/unit+i)%8<4)strip(-.009,.009,'#ac8dae');
  }
@@ -236,10 +264,10 @@ function sunsetChase(c,positions){
      c.lineWidth=.018;c.strokeStyle=j%2?'#bb6596':'#5eb7bb';c.stroke()}
    c.restore();
  }
- const cars=positions.flatMap((v,i)=>Number.isFinite(v)?[{...sample(v*total),i}]:[]).filter(p=>p.z>4&&p.z<145).sort((a,b)=>b.z-a.z);
+ const cars=traffic.flatMap((slot,i)=>slot?[{...sample(slot.p*total),lane:slot.lane,i}]:[]).filter(p=>p.z>4&&p.z<145).sort((a,b)=>b.z-a.z);
  function vehicle(p){
- const d=drivers[p.i],w=(p.i===focus?1410:1200)/p.z;
- const x=p.x+(p.i===focus?0:Math.sin(p.i*2.4+1)*p.w*.38),y=p.y;
+ const d=drivers[p.i],w=870/p.z;
+ const x=p.x+p.lane*p.w,y=p.y;
  c.save();c.translate(x,y);c.scale(w,w);
  const panel=(v,col)=>poly(v,col);
  c.fillStyle='#080b1988';c.beginPath();c.ellipse(0,.04,1.12,.18,0,0,Math.PI*2);c.fill();
@@ -353,18 +381,19 @@ function paint(){
  for(const fraction of checkpoints){if(!Number.isFinite(fraction))continue;const pos=fraction*length,s=segments.find(v=>v.end>=pos);if(!s)continue;
  const at=pos-s.start;face([s.point(at,-7,.3),s.point(at+1/scale,-7,.3),s.point(at+1/scale,7,.3),s.point(at,7,.3)],'#cfbbff')}
  let count=0;
+ const overheadTraffic=trafficLayout(positions,drivers.map(racerTitle),closed,Math.min(.04,16/(scale*length)));
  for(const [i,d] of drivers.entries()){
-   const fraction=positions[i];
+   const fraction=overheadTraffic[i]?.p;
    if(typeof fraction!=='number'||fraction<0||fraction>1)continue;
    const pos=fraction*length,seg=segments.find(s=>s.end>=pos);if(!seg)continue;
-   const base=pos-seg.start,point=(s,t,z)=>seg.point(base+s/scale,t,z);
+   const base=pos-seg.start,point=(s,t,z)=>seg.point(base+s/scale,t+overheadTraffic[i].lane*8,z);
    function box(l,w,b,t,color){
      const ring=z=>[point(-l,-w,z),point(l,-w,z),point(l,w,z),point(-l,w,z)];
      const low=ring(b),high=ring(t);
      for(let j=0;j<4;j++){const k=(j+1)%4;face([low[j],low[k],high[k],high[j]],color)}
      face(high,color);
    }
-   box(7,3.7,1,4,['#a998ff','#72e9cf','#ffae66','#e782ba'][i%4]);box(3.5,2.9,4,7,'#a2bfd0');labels.push({p:project(point(0,0,10)),text:placement(d,i)+' '+racerTitle(d)});count++;
+   box(6,2.1,1,4,['#a998ff','#72e9cf','#ffae66','#e782ba'][i%4]);box(3,1.7,4,6,'#a2bfd0');labels.push({p:project(point(0,0,10)),text:placement(d,i)+' '+racerTitle(d)});count++;
  }
  for(const {p,color} of faces.sort((a,b)=>b.d-a.d)){c.fillStyle=color;c.beginPath();p.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();c.fill()}
  c.font='bold 12px system-ui';const occupied=[];
@@ -376,7 +405,7 @@ function paint(){
 el('cameraMode').onchange=paint;
 el('orbit').oninput=paint;
 async function draw(id){
- timingTrack=id;route=[];motion.clear();cameraPose=null;paint();
+ timingTrack=id;preferredLane.clear();route=[];motion.clear();cameraPose=null;paint();
  const ticket=++mapVersion;
  el('outline').removeAttribute('d');
  el('mapStatus').textContent=id?'Loading map.':'Enter a track ID to view its route.';
