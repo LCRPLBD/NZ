@@ -74,7 +74,8 @@ function display(r,entries){
    if(d===me||retired(d)||raceFlag(d.finished))continue;
    const id=driverName(d).trim().toLowerCase(),sign=compare(me,d),prior=last?.signs.get(id);
    if(prior===-1&&sign===1)passed.push(racerTitle(d));
-   signs.set(id,sign||prior||0);
+   // At first sight, an unresolved matchup starts with Neptune behind.
+   signs.set(id,sign||prior||-1);
  }
  baseline={key,time:now,signs};if(passed.length)flash(track,passed);
  return true;
