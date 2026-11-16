@@ -1,4 +1,6 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><title>Neptune race telemetry</title><style>*{box-sizing:border-box}body{background:transparent;margin:0;font:600 18px/1.3 "Segoe UI",sans-serif;color:#fff}article{width:min(448px,98vw);margin:6px;padding:12px 17px;background:linear-gradient(110deg,#171424f5,#141821ed);border-left:4px solid #b88afb}header{font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:#9ce8eb}h1{font-size:28px;margin:5px 0}p{margin:3px 0;color:#e1d9eb}strong{color:#cca5ff}small{display:block;color:#a6e6eb}[hidden]{display:none}</style><article id="card" hidden><header id="track"></header><h1><strong id="pos"></strong> <span id="name"></span></h1><p id="stats"></p><small id="rival"></small></article><script>
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Neptune · Pass replay</title><style>
+*{box-sizing:border-box}body{margin:0;background:transparent;color:white;font:600 16px/1.2 "Segoe UI",sans-serif}article{position:relative;overflow:hidden;margin:6px;width:min(446px,96vw);height:134px;padding:14px 24px;background:linear-gradient(108deg,#171025fa 32%,#30194af7 74%,#0a2534f5);clip-path:polygon(0 0,100% 0,100% 76%,93% 100%,0 100%);border-left:4px solid #7ff5e3;animation:arrive .35s ease-out}article:after{content:'';position:absolute;bottom:0;left:0;height:3px;width:100%;background:linear-gradient(90deg,#79ffdf,#c58aff);transform-origin:left;animation:timer 5s linear forwards}header{font:700 12px monospace;color:#9bffed;letter-spacing:.13em;text-transform:uppercase}h1{font:italic 900 38px/1 "Segoe UI",sans-serif;letter-spacing:-.055em;margin:8px 0;color:#fff}p{margin:0;color:#dacfee}button{margin:4px 8px;background:#201b31;color:white;border:1px solid #795d98;padding:6px 14px;cursor:pointer}[hidden]{display:none!important}@keyframes arrive{from{transform:translateX(-35px);opacity:0}}@keyframes timer{to{transform:scaleX(0)}}@media(prefers-reduced-motion:reduce){article,article:after{animation:none}}</style>
+<article id="card" hidden><header id="track"></header><h1 id="headline"></h1><p id="versus"></p></article><button id="replay" hidden>Replay pass</button><script>
 const params=new URLSearchParams(location.search),target=(params.get('driver')||'Neptune').trim(),opponent=params.get('rival')?.trim(),demo=params.get('demo')==='1',el=id=>document.getElementById(id);
 function driverName(d){return typeof d==='string'?d:d?.driverName??d?.racer_name??d?.characterName??d?.displayName??d?.racerName??d?.name??d?.alias??'Unnamed racer'}
 function racerTitle(d){
@@ -42,17 +44,40 @@ function runningOrder(rows){
 
 function array(x,keys){if(Array.isArray(x))return x;for(const k of keys)if(Array.isArray(x?.[k]))return x[k];return null}
 const roster=x=>array(x,['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players']);
+let baseline=null,hideTimer=0;
+function compare(a,b){
+ const rankA=rankField(a),rankB=rankField(b);
+ if(Number.isInteger(rankA)&&rankA>0&&Number.isInteger(rankB)&&rankB>0&&rankA!==rankB)return Math.sign(rankB-rankA);
+ if(raceFlag(a.isLeader)&&!raceFlag(b.isLeader))return 1;
+ if(raceFlag(b.isLeader)&&!raceFlag(a.isLeader))return -1;
+ for(const key of ['lap','checkpoint']){
+   if(a[key]==null||b[key]==null||!Number.isFinite(+a[key])||!Number.isFinite(+b[key]))return 0;
+   if(+a[key]!==+b[key])return Math.sign(a[key]-b[key]);
+ }
+ return 0;
+}
+function flash(track,names){
+ clearTimeout(hideTimer);const card=el('card');card.hidden=true;void card.offsetWidth;
+ el('track').textContent=(demo?'Demo · ':'')+track;
+ el('headline').textContent=names.length>1?'MULTIPLE OVERTAKE':'OVERTAKE';
+ el('versus').textContent=target+' ahead of '+names.join(', ');card.hidden=false;
+ hideTimer=setTimeout(()=>card.hidden=true,5000);
+}
 function display(r,entries){
- const rows=runningOrder(entries||[]),find=n=>rows.find(d=>driverName(d).trim().toLowerCase()===n?.toLowerCase()),me=find(target);
+ const rows=entries??[],me=rows.find(d=>driverName(d).trim().toLowerCase()===target.toLowerCase());
  if(!me)return false;
- const active=rows.filter(d=>!retired(d)),leaders=active.filter(d=>raceFlag(d?.isLeader??d?.is_leader));
- function badge(d){if(retired(d))return 'DNF';const p=rows.indexOf(d)+1;
- const flag=p===1&&leaders.length===1&&leaders[0]===d&&!active.some(v=>raceFlag(v?.finished));
- return (flag||rankField(d)===p&&active.filter(v=>rankField(v)===p).length===1?'P':'~P')+p}
- el('pos').textContent=badge(me);el('name').textContent=racerTitle(me);
- el('track').textContent=(demo?'Preview':'NightZoom')+' · '+(r.trackName??r.track?.name??r.name??'Live race');
- el('stats').textContent=[['Lap',me.lap??me.currentLap],['Checkpoint',me.checkpoint??me.currentCheckpoint]].filter(v=>v[1]!=null).map(v=>v.join(' ')).join(' · ');
- const other=find(opponent);el('rival').textContent=other?'Rival · '+racerTitle(other)+' '+badge(other):'';el('card').hidden=false;return true;
+ const track=r.trackName??r.track?.name??r.name??'NightZoom',key=r.raceId??r.race_id??r.id;
+ if(key==null||retired(me)||raceFlag(me.finished)){baseline=null;return true}
+ const now=Date.now(),last=baseline?.key===key&&now-baseline.time<20000?baseline:null;
+ const signs=new Map(),passed=[];
+ for(const d of rows){
+   if(d===me||retired(d)||raceFlag(d.finished))continue;
+   const id=driverName(d).trim().toLowerCase(),sign=compare(me,d),prior=last?.signs.get(id);
+   if(prior===-1&&sign===1)passed.push(racerTitle(d));
+   signs.set(id,sign||prior||0);
+ }
+ baseline={key,time:now,signs};if(passed.length)flash(track,passed);
+ return true;
 }
 async function read(path){const res=await fetch('https://api.bjj-dev.net/v1/racing/live'+path,{cache:'no-store',signal:AbortSignal.timeout(6000)});if(!res.ok)throw Error(String(res.status));const j=await res.json();return j.data??j}
 let previous=null;
@@ -63,8 +88,8 @@ async function poll(){
  if(id(r)!=null){try{const data=await read('/'+encodeURIComponent(id(r)));detail=data.race??data.races?.[0]??(Array.isArray(data)?data[0]:data);rows=roster(detail)??roster(data)??rows}catch{}}
  if(display({...r,...detail},rows)){previous=id(r);return}
  }
- previous=null;el('card').hidden=true;
- }catch{el('card').hidden=true}finally{setTimeout(poll,5000)}
+ previous=null;baseline=null;el('card').hidden=true;
+ }catch{baseline=null;el('card').hidden=true}finally{setTimeout(poll,5000)}
 }
-if(demo)display({trackName:'Supersonic'},[{name:opponent||'CHROME',crewTag:'AWD',isLeader:true},{name:target,position:2,lap:1,checkpoint:41}]);else poll();
+if(demo){const replay=()=>flash('Supersonic',['[AWD] '+(opponent||'CHROME')]);el('replay').hidden=false;el('replay').onclick=replay;replay()}else poll();
 </script></html>
