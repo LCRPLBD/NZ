@@ -39,13 +39,26 @@ async function draw(id){
  el('mapStatus').textContent=id+(graph.loop?' � Circuit':' � Point to point');
  }catch(e){if(ticket===mapVersion)el('mapStatus').textContent='Map unavailable � '+e.message}
 }
-function render(){
- const race=races[Number(el('race').value)];
- const entries=list(race,['standings','runningOrder','order','racers','participants','drivers','entries','players']);
+let selectionVersion=0;
+async function render(){
+ const version=++selectionVersion;
+ const summary=races[Number(el('race').value)];
+ let race=summary;
+ const id=summary?.raceId??summary?.race_id??summary?.id;
+ if(!demo && id!=null){
+   try{
+     const raw=await read('live/'+encodeURIComponent(id));
+     const data=raw.data??raw;
+     const detail=data.race??data.races?.[0]??(Array.isArray(data)?data[0]:data);
+     race={...summary,...data,...detail};
+   }catch{ /* Keep the public list entry when detail is unavailable. */ }
+   if(version!==selectionVersion)return;
+ }
+ const entries=list(race,['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players']);
  el('order').replaceChildren();
  el('empty').textContent=!race?'Waiting for a live race.':!entries?'Running order unavailable for this response.':entries.length?'':'Waiting for the starting order.';
- for(const driver of entries??[]){const row=document.createElement('li');row.textContent=typeof driver==='string'?driver:driver?.displayName??driver?.racerName??driver?.name??driver?.alias??'Unnamed racer';el('order').append(row)}
- const track=String(race?.trackId??race?.track?.id??'');
+ for(const driver of entries??[]){const row=document.createElement('li');row.textContent=typeof driver==='string'?driver:driver?.driverName??driver?.racer_name??driver?.characterName??driver?.displayName??driver?.racerName??driver?.name??driver?.alias??'Unnamed racer';el('order').append(row)}
+ const track=String(race?.trackId??race?.track_id??race?.track?.trackId??race?.track?.id??(/^NZ-/i.test(race?.track)?race.track:''));
  if(track!==lastTrack){lastTrack=track;el('track').value=track;draw(track)}
 }
 async function refresh(){
@@ -60,7 +73,7 @@ async function refresh(){
  races=next;el('race').replaceChildren(...races.map((r,i)=>new Option(r.trackName??r.track?.name??r.name??key(r)??'Race '+(i+1),i)));
  if(!races.length)el('race').add(new Option('No active races',''));
  el('race').disabled=!races.length;el('race').selectedIndex=Math.max(0,races.findIndex(r=>key(r)===previous));
- render();el('status').textContent=demo?'Demo � Sample race':races.length+' active � Updated '+new Date().toLocaleTimeString();
+ render();el('status').textContent=demo?'Demo � Sample race':races.length+' active | Updated '+new Date().toLocaleTimeString();
  }catch(e){if(ticket===generation)el('status').textContent='Live update unavailable � '+e.message+(races.length?' � Showing last update':'')}
  finally{if(ticket===generation&&!demo)timer=setTimeout(refresh,15000)}
 }
