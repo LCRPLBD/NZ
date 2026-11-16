@@ -1,0 +1,70 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Neptune race telemetry</title><style>*{box-sizing:border-box}body{background:transparent;margin:0;font:600 18px/1.3 "Segoe UI",sans-serif;color:#fff}article{width:min(448px,98vw);margin:6px;padding:12px 17px;background:linear-gradient(110deg,#171424f5,#141821ed);border-left:4px solid #b88afb}header{font-size:13px;letter-spacing:.09em;text-transform:uppercase;color:#9ce8eb}h1{font-size:28px;margin:5px 0}p{margin:3px 0;color:#e1d9eb}strong{color:#cca5ff}small{display:block;color:#a6e6eb}[hidden]{display:none}</style><article id="card" hidden><header id="track"></header><h1><strong id="pos"></strong> <span id="name"></span></h1><p id="stats"></p><small id="rival"></small></article><script>
+const params=new URLSearchParams(location.search),target=(params.get('driver')||'Neptune').trim(),opponent=params.get('rival')?.trim(),demo=params.get('demo')==='1',el=id=>document.getElementById(id);
+function driverName(d){return typeof d==='string'?d:d?.driverName??d?.racer_name??d?.characterName??d?.displayName??d?.racerName??d?.name??d?.alias??'Unnamed racer'}
+function racerTitle(d){
+ const name=driverName(d);
+ const raw=d?.crewTag??d?.crew_tag??d?.crew?.tag;
+ const tag=typeof raw==='string'?raw.trim().replace(/^\[|\]$/g,'').trim():'';
+ if(!tag||name.startsWith('['+tag+'] '))return name;
+ return '['+tag+'] '+name;
+}
+function raceFlag(value){return value===true||value===1||value==='true'}
+function retired(d){return raceFlag(d?.dnf)}
+function rankField(d){return Number(d?.position??d?.rank??d?.place)}
+function runningOrder(rows){
+ if(!rows)return rows;
+ const classified=rows.filter(d=>!retired(d)),out=Array(classified.length).fill(null),used=new Set();
+ const ranks=classified.map(rankField);
+ const leaders=classified.map((d,i)=>raceFlag(d?.isLeader??d?.is_leader)?i:-1).filter(i=>i>=0);
+ // Completed classifications take precedence over a lingering live leader flag.
+ if(leaders.length===1&&!classified.some(d=>raceFlag(d?.finished))){
+   out[0]=classified[leaders[0]];used.add(leaders[0]);
+ }
+ classified.forEach((d,i)=>{
+   const rank=ranks[i];
+   if(!used.has(i)&&Number.isInteger(rank)&&rank>0&&rank<=out.length&&ranks.indexOf(rank)===ranks.lastIndexOf(rank)&&out[rank-1]===null){
+     out[rank-1]=d;used.add(i);
+   }
+ });
+ const remaining=classified.filter((_,i)=>!used.has(i));
+ const numeric=v=>v!=null&&v!==''&&Number.isFinite(Number(v))?Number(v):-1;
+ const lap=d=>numeric(d?.lap??d?.currentLap);
+ const cp=d=>numeric(d?.checkpoint??d?.currentCheckpoint??d?.checkpointIndex);
+ const progress=d=>numeric(d?.lapProgress??d?.trackProgress??d?.progress);
+ remaining.sort((a,b)=>{
+   const af=raceFlag(a?.finished),bf=raceFlag(b?.finished);
+   if(af||bf)return Number(bf)-Number(af);
+   return lap(b)-lap(a)||cp(b)-cp(a)||progress(b)-progress(a);
+ });
+ let cursor=0;
+ return out.map(d=>d??remaining[cursor++]).concat(rows.filter(retired));
+}
+
+function array(x,keys){if(Array.isArray(x))return x;for(const k of keys)if(Array.isArray(x?.[k]))return x[k];return null}
+const roster=x=>array(x,['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players']);
+function display(r,entries){
+ const rows=runningOrder(entries||[]),find=n=>rows.find(d=>driverName(d).trim().toLowerCase()===n?.toLowerCase()),me=find(target);
+ if(!me)return false;
+ const active=rows.filter(d=>!retired(d)),leaders=active.filter(d=>raceFlag(d?.isLeader??d?.is_leader));
+ function badge(d){if(retired(d))return 'DNF';const p=rows.indexOf(d)+1;
+ const flag=p===1&&leaders.length===1&&leaders[0]===d&&!active.some(v=>raceFlag(v?.finished));
+ return (flag||rankField(d)===p&&active.filter(v=>rankField(v)===p).length===1?'P':'~P')+p}
+ el('pos').textContent=badge(me);el('name').textContent=racerTitle(me);
+ el('track').textContent=(demo?'Preview':'NightZoom')+' · '+(r.trackName??r.track?.name??r.name??'Live race');
+ el('stats').textContent=[['Lap',me.lap??me.currentLap],['Checkpoint',me.checkpoint??me.currentCheckpoint]].filter(v=>v[1]!=null).map(v=>v.join(' ')).join(' · ');
+ const other=find(opponent);el('rival').textContent=other?'Rival · '+racerTitle(other)+' '+badge(other):'';el('card').hidden=false;return true;
+}
+async function read(path){const res=await fetch('https://api.bjj-dev.net/v1/racing/live'+path,{cache:'no-store',signal:AbortSignal.timeout(6000)});if(!res.ok)throw Error(String(res.status));const j=await res.json();return j.data??j}
+let previous=null;
+async function poll(){
+ try{const races=array(await read(''),['races','live','activeRaces'])??[],id=r=>r.raceId??r.race_id??r.id;
+ for(const r of races.slice().sort((a,b)=>Number(id(b)===previous)-Number(id(a)===previous))){
+ let detail=r,rows=roster(r);
+ if(id(r)!=null){try{const data=await read('/'+encodeURIComponent(id(r)));detail=data.race??data.races?.[0]??(Array.isArray(data)?data[0]:data);rows=roster(detail)??roster(data)??rows}catch{}}
+ if(display({...r,...detail},rows)){previous=id(r);return}
+ }
+ previous=null;el('card').hidden=true;
+ }catch{el('card').hidden=true}finally{setTimeout(poll,5000)}
+}
+if(demo)display({trackName:'Supersonic'},[{name:opponent||'CHROME',crewTag:'AWD',isLeader:true},{name:target,position:2,lap:1,checkpoint:41}]);else poll();
+</script></html>
