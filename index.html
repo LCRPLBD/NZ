@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NightZoom � Race Control</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0d1015;color:#f3f4f7;font:16px/1.5 system-ui,sans-serif}main,header{max-width:1150px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #323841}header strong{font-style:italic;letter-spacing:.09em}button,select,input{font:inherit;background:#202630;color:inherit;border:1px solid #49515d;border-radius:7px;padding:8px 12px}button{cursor:pointer}h1{font-size:clamp(32px,6vw,68px);letter-spacing:-.06em;margin:20px 0}h2{font-size:20px;margin:0 0 16px}section{background:#171c23;border:1px solid #303741;border-radius:12px;padding:22px}article{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;margin-top:18px}label{display:block;color:#b5bfca;margin-bottom:6px}#status{color:#95e6d8}ol{padding-left:2em}li{padding:8px;border-bottom:1px solid #343944}svg{width:100%;height:280px;background:#10151c;border-radius:8px}form{display:flex;gap:8px;flex-wrap:wrap}input{width:12em}small{color:#b5bfca}@media(max-width:700px){article{grid-template-columns:1fr}main,header{padding:16px}}
+</style>
+<header><strong>NIGHTZOOM</strong><button id="mode">Preview demo</button></header>
+<main><h1>Race control</h1><p role="status" id="status">Connecting to NightZoom.</p>
+<label for="race">Race</label><select id="race" disabled><option>Waiting for races</option></select>
+<article><section><h2>Running order</h2><ol id="order"></ol><p id="empty"></p></section>
+<section><h2>Track map</h2><form id="lookup"><input id="track" aria-label="Track ID" placeholder="Track ID, e.g. NZ-4710" required><button>Load map</button></form><p id="mapStatus" role="status"></p><svg id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
+<script>
+const el=id=>document.getElementById(id);
+const api='https://api.bjj-dev.net/v1/racing/';
+const demoRace={raceId:'sample',trackName:'Docklands Sprint',trackId:'DEMO',standings:[{name:'Neptune'},{name:'Apex'},{name:'Luna'}]};
+let demo=false,races=[],generation=0,mapVersion=0,timer,lastTrack='';
+async function read(route){
+ const response=await fetch(api+route,{credentials:'omit',signal:AbortSignal.timeout(8000)});
+ if(!response.ok)throw Error('HTTP '+response.status);
+ return response.json();
+}
+function list(value,keys){
+ if(Array.isArray(value))return value;
+ for(const key of keys)if(Array.isArray(value?.[key]))return value[key];
+ return null;
+}
+async function draw(id){
+ const ticket=++mapVersion;
+ el('outline').removeAttribute('d');
+ el('mapStatus').textContent=id?'Loading map.':'Enter a track ID to view its route.';
+ if(!id)return;
+ try{
+ const raw=demo&&id==='DEMO'?{points:[[50,210],[290,200],[450,650],[830,820],[935,520],[610,320]],loop:false}:await read('tracks/'+encodeURIComponent(id)+'/graph');
+ const graph=raw.data?.graph??raw.graph??raw.data??raw;
+ const points=graph.points.map(p=>Array.isArray(p)?p:[p.x,p.y]);
+ if(points.length<2||points.some(p=>!p.every(Number.isFinite)))throw Error('Unsupported track data');
+ if(ticket!==mapVersion)return;
+ el('outline').setAttribute('d',points.map(([x,y],i)=>(i?'L':'M')+x+' '+(1000-y)).join(' ')+(graph.loop?' Z':''));
+ el('mapStatus').textContent=id+(graph.loop?' � Circuit':' � Point to point');
+ }catch(e){if(ticket===mapVersion)el('mapStatus').textContent='Map unavailable � '+e.message}
+}
+function render(){
+ const race=races[Number(el('race').value)];
+ const entries=list(race,['standings','runningOrder','order','racers','participants','drivers','entries','players']);
+ el('order').replaceChildren();
+ el('empty').textContent=!race?'Waiting for a live race.':!entries?'Running order unavailable for this response.':entries.length?'':'Waiting for the starting order.';
+ for(const driver of entries??[]){const row=document.createElement('li');row.textContent=typeof driver==='string'?driver:driver?.displayName??driver?.racerName??driver?.name??driver?.alias??'Unnamed racer';el('order').append(row)}
+ const track=String(race?.trackId??race?.track?.id??'');
+ if(track!==lastTrack){lastTrack=track;el('track').value=track;draw(track)}
+}
+async function refresh(){
+ const ticket=generation;
+ try{
+ const raw=demo?[demoRace]:await read('live');
+ if(ticket!==generation)return;
+ const next=list(raw.data??raw,['races','live','activeRaces']);
+ if(!next)throw Error('Unrecognized live race format');
+ const key=r=>r?.raceId??r?.id??r?.trackName;
+ const previous=key(races[Number(el('race').value)]);
+ races=next;el('race').replaceChildren(...races.map((r,i)=>new Option(r.trackName??r.track?.name??r.name??key(r)??'Race '+(i+1),i)));
+ if(!races.length)el('race').add(new Option('No active races',''));
+ el('race').disabled=!races.length;el('race').selectedIndex=Math.max(0,races.findIndex(r=>key(r)===previous));
+ render();el('status').textContent=demo?'Demo � Sample race':races.length+' active � Updated '+new Date().toLocaleTimeString();
+ }catch(e){if(ticket===generation)el('status').textContent='Live update unavailable � '+e.message+(races.length?' � Showing last update':'')}
+ finally{if(ticket===generation&&!demo)timer=setTimeout(refresh,15000)}
+}
+el('mode').onclick=()=>{generation++;clearTimeout(timer);demo=!demo;races=[];lastTrack='';el('track').value='';draw('');el('race').replaceChildren(new Option('Waiting for races',''));el('race').disabled=true;render();el('mode').textContent=demo?'Return to live':'Preview demo';el('status').textContent='Connecting.';refresh()};
+el('race').onchange=render;
+el('lookup').onsubmit=e=>{e.preventDefault();draw(el('track').value.trim())};
+draw('');refresh();
+</script></html>
