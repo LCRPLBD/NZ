@@ -202,6 +202,26 @@ el('bindTrack').onsubmit=async e=>{
  if(key===selectedKey){el('missingTrack').hidden=!!route.length;el('bindStatus').textContent=route.length?'Circuit loaded.':'Could not draw circuit.'}
  }catch(err){if(key===selectedKey)el('bindStatus').textContent=err.message}
 };
+function enrichVehicles(order,sources,keys){
+ if(!order)return order;
+ const models=new Map();
+ for(const source of sources){
+   for(const key of keys){
+     if(!Array.isArray(source?.[key]))continue;
+     for(const row of source[key]){
+       const name=driverName(row),model=vehicleLabel(row);
+       if(name==='Unnamed racer'||model==='Not reported')continue;
+       if(!models.has(name))models.set(name,new Set());
+       models.get(name).add(model);
+     }
+   }
+ }
+ return order.map(row=>{
+   const name=driverName(row),matches=models.get(name);
+   if(vehicleLabel(row)!=='Not reported'||matches?.size!==1)return row;
+   return {...(typeof row==='object'?row:{name}),vehicleName:[...matches][0]};
+ });
+}
 async function render(){
  const version=++selectionVersion;
  const summary=races[Number(el('race').value)];
@@ -224,7 +244,9 @@ async function render(){
    }catch(error){if(version===selectionVersion)diagnostics.detailError=error.message}
    if(version!==selectionVersion)return;
  }
- const entries=list(race,['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players']);
+ const rosterKeys=['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players'];
+ const order=list(race,rosterKeys);
+ const entries=enrichVehicles(order,[summary,race],rosterKeys);
  drivers=entries??[];paint();
  const opened=new Set([...el('order').querySelectorAll('details[open]')].map(node=>node.dataset.driver));
  el('order').replaceChildren();
