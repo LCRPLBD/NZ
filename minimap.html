@@ -1,0 +1,72 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Neptune race minimap</title><style>*{box-sizing:border-box}body{margin:0;background:transparent;color:white;font:600 14px system-ui}article{margin:6px;width:296px;background:linear-gradient(132deg,#121224ed,#161b26d9);border-left:3px solid #bc93ff;padding:10px 13px}header{display:flex;justify-content:space-between;align-items:center}small{color:#91ede8;font:11px monospace}svg{width:100%;height:178px;display:block}footer{color:#d8c4ff;font-size:12px}[hidden]{display:none}</style><article id="card" hidden><header><b id="title"></b><small id="status"></small></header><svg id="map" viewBox="0 0 300 180" aria-label="Race track and racer positions"></svg><footer>◆ Neptune　<span style="color:#8ad9df">● Field</span></footer></article><script>
+const el=id=>document.getElementById(id),api='https://api.bjj-dev.net/v1/racing/',demo=new URLSearchParams(location.search).get('demo')==='1';
+function driverName(d){return typeof d==='string'?d:d?.driverName??d?.racer_name??d?.characterName??d?.displayName??d?.racerName??d?.name??d?.alias??'Unnamed racer'}
+function racerTitle(d){
+ const name=driverName(d);
+ const raw=d?.crewTag??d?.crew_tag??d?.crew?.tag;
+ const tag=typeof raw==='string'?raw.trim().replace(/^\[|\]$/g,'').trim():'';
+ if(!tag||name.startsWith('['+tag+'] '))return name;
+ return '['+tag+'] '+name;
+}
+
+function trackIdOf(r){
+ const track=r?.track;
+ return r?.trackId||r?.trackID||r?.track_id||track?.trackId||track?.track_id||track?.id||(/^NZ-[\w-]+$/i.test(track)?track:'');
+}
+const normalizeTitle=s=>String(s??'').normalize('NFKC').trim().toLowerCase().replace(/[\s_-]+/g,' ');
+function catalogMatch(value,name){
+ const ids=new Set(),wanted=normalizeTitle(name);
+ if(!wanted)return '';
+ function scan(node,key=''){
+   if(!node||typeof node!=='object')return;
+   const titles=[node.trackName,node.track_name,node.name,node.title,node.label,node.track?.name,key];
+   const id=trackIdOf(node)||node.id||(/^NZ-/i.test(key)?key:'');
+   if(id&&titles.some(t=>normalizeTitle(t)===wanted))ids.add(String(id));
+   for(const [k,v] of Object.entries(node)){
+     if(typeof v==='string'&&/^NZ-/i.test(k)&&normalizeTitle(v)===wanted)ids.add(k);
+     if(typeof v==='string'&&/^NZ-/i.test(v)&&normalizeTitle(k)===wanted)ids.add(v);
+     if(typeof v==='object')scan(v,k);
+   }
+ }
+ scan(value);return ids.size===1?[...ids][0]:'';
+}
+
+function array(x,keys){if(Array.isArray(x))return x;for(const k of keys)if(Array.isArray(x?.[k]))return x[k];return []}
+const roster=r=>array(r,['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players']);
+const mine=d=>driverName(d).trim().toLowerCase()==='neptune';
+async function read(path){const r=await fetch(api+path,{cache:'no-store',signal:AbortSignal.timeout(6000)});if(!r.ok)throw Error(String(r.status));const j=await r.json();return j.data??j}
+function shape(tag,attrs){const node=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [key,v] of Object.entries(attrs))node.setAttribute(key,v);el('map').append(node)}
+function draw(g,rows,name){
+ const pts=g.points.map(p=>Array.isArray(p)?p:[p.x,p.y]);if(pts.length<2||pts.some(p=>!p.every(Number.isFinite)))throw Error('Invalid graph');
+ if(g.loop)pts.push(pts[0]);const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]),lo=Math.min(...xs),hi=Math.max(...xs),bottom=Math.min(...ys),top=Math.max(...ys);
+ const scale=Math.min(270/Math.max(1,hi-lo),150/Math.max(1,top-bottom)),xy=pts.map(([x,y])=>[150+(x-(lo+hi)/2)*scale,90-(y-(top+bottom)/2)*scale]);
+ const dist=[0];for(let i=1;i<xy.length;i++)dist.push(dist[i-1]+Math.hypot(xy[i][0]-xy[i-1][0],xy[i][1]-xy[i-1][1]));
+ el('map').replaceChildren();const points=xy.map(p=>p.join(',')).join(' ');
+ for(const [width,color] of [[8,'#45495d'],[3,'#d2d4e3']])shape('polyline',{points,fill:'none',stroke:color,'stroke-width':width,'stroke-linecap':'round','stroke-linejoin':'round'});
+ let located=false;
+ for(const d of rows.slice().sort((a,b)=>Number(mine(a))-Number(mine(b)))){
+ const raw=d.lapProgress??d.trackProgress??d.progress,index=d.checkpointIndex??(Number(d.currentCheckpoint??d.checkpoint)-1),v=raw!=null&&raw!==''&&+raw>=0&&+raw<=1?+raw:g.checkpointAt?.[index];
+ if(!Number.isFinite(v)||v<0||v>1)continue;
+ const target=v*dist.at(-1);let j=1;while(j<dist.length-1&&dist[j]<target)j++;
+ const t=(target-dist[j-1])/(dist[j]-dist[j-1]||1),[x,y]=xy[j-1].map((a,k)=>a+t*(xy[j][k]-a));
+ if(mine(d)){located=true;shape('polygon',{points:[[x,y-7],[x+7,y],[x,y+7],[x-7,y]].map(p=>p.join(',')).join(' '),fill:'#c198ff',stroke:'#fff','stroke-width':1.5})}
+ else shape('circle',{cx:x,cy:y,r:3.5,fill:'#8ad9df',stroke:'#15202c'});
+ }
+ el('title').textContent=name;el('status').textContent=demo?'DEMO':located?'LIVE':'AWAITING POSITION';el('card').hidden=false;
+}
+let savedId='',graph,previous=null,catalog,stamp=0;
+async function poll(){try{
+ const races=array(await read('live'),['races','live','activeRaces']),id=r=>r.raceId??r.race_id??r.id;
+ for(const summary of races.slice().sort((a,b)=>Number(id(b)===previous)-Number(id(a)===previous))){
+ let r=summary,rows=roster(r);if(id(r)!=null){try{const data=await read('live/'+encodeURIComponent(id(r))),detail=data.race??data.races?.[0]??(Array.isArray(data)?data[0]:data);r={...summary,...detail};const fromDetail=roster(detail);if(fromDetail.length)rows=fromDetail;else if(roster(data).length)rows=roster(data)}catch{}}
+ if(!rows.some(mine))continue;previous=id(summary);
+ const name=r.trackName??r.track?.name??r.name??'NightZoom';let track=trackIdOf(r)||trackIdOf(summary);
+ if(!track){if(!catalog||Date.now()-stamp>60000){catalog=await read('tracks');stamp=Date.now()}track=catalogMatch(catalog,name)||String(previous??'').match(/NZ-\d+/i)?.[0]}
+ if(!track)break;
+ if(savedId!==track){const raw=await read('tracks/'+encodeURIComponent(track)+'/graph');graph=raw.graph??raw;savedId=track}
+ draw(graph,rows,name);return;
+ }
+ el('card').hidden=true;
+ }catch{el('card').hidden=true}finally{setTimeout(poll,5000)}}
+if(demo){const g={loop:true,points:[[0,220],[100,420],[330,500],[710,440],[880,200],[740,60],[540,170],[300,80],[80,90]]};const start=performance.now();function preview(){const p=(performance.now()-start)/24000;draw(g,[{name:'Neptune',progress:(p+.1)%1},{name:'CHROME',progress:(p+.14)%1},{name:'Runner',progress:(p+.06)%1}],'Preview circuit')}preview();setInterval(preview,100)}else poll();
+</script></html>
