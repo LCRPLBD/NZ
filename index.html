@@ -9,7 +9,7 @@ header strong{font:italic 900 19px system-ui;letter-spacing:.06em}h1{letter-spac
 h2{letter-spacing:-.035em}main>article{align-items:start}nav a{color:#acbbcf}nav a[aria-current]{background:#233d40;color:#abf9e8;box-shadow:inset 3px 0 var(--ice)}
 button,select,input{border-color:#384b60;background:#202e3e;border-radius:9px}#race{min-width:min(100%,260px)}#report{overflow:hidden;margin-top:16px}#report th{color:#b7c8de;background:#1b2837;white-space:nowrap}#report tr:hover{background:#1c2937}.field{background:#1b2939;border:1px solid #314154;padding:15px}.field small{font-size:12px;letter-spacing:.03em;margin-bottom:5px}#status,#pageStatus,#mapStatus{font-size:14px}#order li:first-child{background:#1e343a;border-radius:7px}#scene{background:radial-gradient(ellipse at center,#203047,#0e1722)!important}#orbit{vertical-align:middle;accent-color:var(--ice)}
 @media(min-width:1000px){body{display:grid;grid-template-columns:210px minmax(0,1fr);grid-template-rows:auto 1fr}header{grid-column:1/-1;width:100%;max-width:none;border-bottom:1px solid var(--line);padding:18px 32px}nav{display:flex;flex-direction:column;align-self:start;position:sticky;top:12px;gap:5px;width:100%;padding:28px 15px;border:0}nav a{padding:12px 16px}main{width:100%;min-width:0;margin:0 auto;padding:26px clamp(20px,3vw,58px);border-left:1px solid var(--line);min-height:90vh}#livePage article{grid-template-columns:minmax(0,1.8fr) minmax(225px,.8fr)}#livePage article section:first-child{grid-column:2;grid-row:1}#livePage article section:last-child{grid-column:1;grid-row:1}}
-#scene{aspect-ratio:16/9;display:block}#livePage article{display:flex;flex-direction:column}#livePage article section{width:100%}#livePage article section:last-child{order:-1}#livePage #order{columns:2} @media(max-width:650px){#livePage #order{columns:1}} </style>
+#scene{aspect-ratio:16/9;display:block}#livePage article{display:flex;flex-direction:column}#livePage article section{width:100%}#livePage article section:last-child{order:-1}#livePage #order{columns:2} @media(max-width:650px){#livePage #order{columns:1}} #livePage #order{columns:initial;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:10px;padding:0}#order li{align-items:flex-start;padding:14px;background:#182533;border:1px solid #304254;border-radius:9px;min-width:0}#order li:before{display:none}.rank{color:#9ce8dc;font:bold 15px monospace;padding-top:3px}.driverCard{flex:1;min-width:0}.driverCard details{background:#101c28}.driverMetrics{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.driverMetrics span{font-size:13px;color:#cfdae8;background:#273645;padding:2px 6px;border-radius:4px}.driverCard .fields{grid-template-columns:repeat(auto-fit,minmax(min(100%,110px),1fr))}</style>
 <header><strong>NIGHTZOOM</strong><button id="mode">Preview demo</button></header><nav aria-label="Racing sections" id="nav"></nav>
 <main id="livePage"><h1>Live race</h1><p role="status" id="status">Connecting to NightZoom.</p>
 <label for="race">Race</label><select id="race" disabled><option>Waiting for races</option></select>
@@ -216,9 +216,27 @@ async function render(){
    if(version!==selectionVersion)return;
  }
  const entries=list(race,['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players']);
- drivers=entries??[];paint();el('order').replaceChildren();
+ drivers=entries??[];paint();
+ const opened=new Set([...el('order').querySelectorAll('details[open]')].map(node=>node.dataset.driver));
+ el('order').replaceChildren();
  el('empty').textContent=!race?'Waiting for a live race.':!entries?'Running order unavailable for this response.':entries.length?'':'Waiting for the starting order.';
- for(const driver of entries??[]){const row=document.createElement('li');row.textContent=typeof driver==='string'?driver:driver?.driverName??driver?.racer_name??driver?.characterName??driver?.displayName??driver?.racerName??driver?.name??driver?.alias??'Unnamed racer';el('order').append(row)}
+ for(const [index,driver] of drivers.entries()){
+   const row=element('li'),name=driverName(driver),rank=placement(driver,index);
+   const heading=element('strong',name),badge=element('span','P'+rank);badge.className='rank';
+   const card=element('div');card.className='driverCard';row.append(badge,card);card.append(heading);
+   if(driver&&typeof driver==='object'){
+     const key=JSON.stringify([raceKey,driver.racerId??driver.driverId??driver.id??name]);
+     const highlights=element('div');highlights.className='driverMetrics';
+     for(const [title,aliases] of [['Lap',['lap','currentLap']],['Checkpoint',['currentCheckpoint','checkpoint','checkpointIndex']],['Car',['vehicleName','carName','vehicle','car']],['Class',['vehicleClass','class']],['Gap',['gapToLeader','gap']],['Best lap',['bestLapTime','bestLap']],['Last lap',['lastLapTime','lastLap']],['Speed',['speedKmh','speedMph','speed']]]){
+       const field=aliases.find(k=>driver[k]!=null&&driver[k]!==''&&typeof driver[k]!=='object');
+       if(field){const unit=field==='speedKmh'?' km/h':field==='speedMph'?' mph':'';highlights.append(element('span',title+' · '+driver[field]+unit))}
+     }
+     if(highlights.childElementCount)card.append(highlights);
+     const detail=element('details');detail.dataset.driver=key;detail.open=opened.has(key);
+     detail.append(element('summary','All racer data'),showData(driver));card.append(detail);
+   }
+   el('order').append(row);
+ }
  const track=await resolveTrack(race,summary);
  if(version!==selectionVersion)return;
  if(track!==lastTrack||(track&&!route.length&&Date.now()>=retryGraphAt)){
