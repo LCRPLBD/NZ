@@ -30,14 +30,14 @@ main section>h2{border-bottom:1px solid #42474a;padding-bottom:12px;font-size:21
 <main id="livePage"><h1>Live race</h1><p role="status" id="status">Connecting to NightZoom.</p>
 <label for="race">Race</label><select id="race" disabled><option>Waiting for races</option></select>
 <article><section><h2>Running order</h2><small id="leaderNote"></small><ol id="order"></ol><p id="empty"></p></section>
-<section><h2 id="sceneTitle">3D race view</h2><p id="mapStatus" role="status"></p><button hidden id="copyRace" type="button">Copy race diagnostics</button><textarea hidden readonly id="raceDiagnosticText" aria-label="Race diagnostics"></textarea><details id="missingTrack" hidden><summary>Find this circuit</summary><p><a id="raceData" target="_blank" rel="noreferrer">Selected race data</a> · <a href="https://api.bjj-dev.net/v1/racing/tracks" target="_blank" rel="noreferrer">Track catalog</a></p><form id="bindTrack"><input id="bindId" aria-label="Track ID" placeholder="NZ-4710" required><button>Use track ID</button></form><small id="bindStatus"></small></details><canvas id="scene" width="1280" height="720" style="width:100%;background:#101923;border-radius:8px" aria-label="Three-dimensional race circuit"></canvas><label>Camera <select id="cameraMode"><option value="pack">Follow pack</option><option value="all">Full circuit</option></select></label><label>Camera angle <input id="orbit" type="range" min="-180" max="180" value="-25"></label><small id="telemetry"></small><svg style="display:none" id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
+<section><h2 id="sceneTitle">3D race view</h2><p id="mapStatus" role="status"></p><button hidden id="copyRace" type="button">Copy race diagnostics</button><textarea hidden readonly id="raceDiagnosticText" aria-label="Race diagnostics"></textarea><details id="missingTrack" hidden><summary>Find this circuit</summary><p><a id="raceData" target="_blank" rel="noreferrer">Selected race data</a> · <a href="https://api.bjj-dev.net/v1/racing/tracks" target="_blank" rel="noreferrer">Track catalog</a></p><form id="bindTrack"><input id="bindId" aria-label="Track ID" placeholder="NZ-4710" required><button>Use track ID</button></form><small id="bindStatus"></small></details><canvas id="scene" width="1280" height="720" style="width:100%;background:#101923;border-radius:8px" aria-label="Three-dimensional race circuit"></canvas><label>Camera <select id="cameraMode"><option value="chase">Sunset chase</option><option selected value="pack">Follow pack</option><option value="all">Full circuit</option></select></label><label>Camera angle <input id="orbit" type="range" min="-180" max="180" value="-25"></label><small id="telemetry"></small><svg style="display:none" id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
 <main id="other" hidden><h1 id="title"></h1><div id="rail"><button id="reload">Refresh</button><span id="pageStatus" role="status"></span></div><form id="query" hidden><input id="identifier" required><button id="submitLookup">Open</button></form><section id="report"></section></main><script>
 const el=id=>document.getElementById(id);
 const api='https://api.bjj-dev.net/v1/racing/';
 const demoRace={raceId:'sample',trackName:'Docklands Sprint',trackId:'DEMO',standings:[{name:'Neptune',progress:.75},{name:'Apex',progress:.50},{name:'Luna',progress:.35}]};
 let demo=false,races=[],generation=0,mapVersion=0,timer,lastTrack='';
 async function read(route){
- const response=await fetch(api+route,{credentials:'omit',signal:AbortSignal.timeout(8000)});
+ const response=await fetch(api+route,{cache:'no-store',credentials:'omit',signal:AbortSignal.timeout(8000)});
  if(!response.ok)throw Error('HTTP '+response.status);
  return response.json();
 }
@@ -121,6 +121,46 @@ function packWindow(fractions,loop){
  }
  return pool.slice(best,best+size).map(x=>x>1?x-1:x);
 }
+function sunsetChase(c,positions){
+ const sky=c.createLinearGradient(0,0,0,410);
+ sky.addColorStop(0,'#141132');sky.addColorStop(.62,'#803d89');sky.addColorStop(1,'#ff83b0');
+ c.fillStyle=sky;c.fillRect(0,0,1280,410);
+ c.save();c.beginPath();c.arc(510,283,91,0,Math.PI*2);c.clip();
+ c.fillStyle='#ffe6a2';for(let y=192;y<375;y+=9)c.fillRect(416,y,190,y<260?9:5);c.restore();
+ function poly(points,color){c.fillStyle=color;c.beginPath();points.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();c.fill()}
+ for(let i=0;i<10;i++)poly([[i*150-115,401],[i*150,325+31*Math.sin(i*4)],[i*150+130,401]],'#60396d');
+ c.fillStyle='#211c39';c.fillRect(0,399,1280,321);
+ const focus=positions.findLastIndex((v,i)=>Number.isFinite(v)&&!retired(drivers[i]));
+ if(focus<0){el('telemetry').textContent='Waiting for racer positions.';return}
+ const dist=[0];for(let i=1;i<route.length;i++)dist.push(dist[i-1]+Math.hypot(route[i][0]-route[i-1][0],route[i][1]-route[i-1][1]));
+ const total=dist.at(-1),unit=total/850;
+ function point(s){
+   if(closed)s=((s%total)+total)%total;
+   let lo=1,hi=dist.length-1;while(lo<hi){const m=(lo+hi)>>1;if(dist[m]<s)lo=m+1;else hi=m}
+   const a=route[lo-1],b=route[lo],t=(s-dist[lo-1])/(dist[lo]-dist[lo-1]);
+   return a.map((v,k)=>v+(b[k]-v)*t);
+ }
+ const s=positions[focus]*total,origin=point(s),ahead=point(s+unit*2);
+ const dx=ahead[0]-origin[0],dy=ahead[1]-origin[1],len=Math.hypot(dx,dy)||1;
+ function sample(at){
+   const p=point(at),x=(p[0]-origin[0])/unit,y=(p[1]-origin[1])/unit;
+   const z=14+(x*dx+y*dy)/len;
+   return {x:640+530*(x*dy-y*dx)/(len*z),y:398+2100/z,w:2250/z,z};
+ }
+ for(let i=135;i>=-10;i--){const a=sample(s+i*unit),b=sample(s+(i+1)*unit);if(Math.min(a.z,b.z)<3)continue;
+   const strip=(l,r,color)=>poly([[a.x+l*a.w,a.y],[b.x+l*b.w,b.y],[b.x+r*b.w,b.y],[a.x+r*a.w,a.y]],color);
+   strip(-1,1,'#282641');strip(-1,-.975,'#ff68c5');strip(.975,1,'#8bf0fb');
+   if(Math.floor(s/unit+i)%8<4)strip(-.009,.009,'#ac8dae');
+ }
+ const cars=positions.flatMap((v,i)=>Number.isFinite(v)?[{...sample(v*total),i}]:[]).filter(p=>p.z>4&&p.z<145).sort((a,b)=>b.z-a.z);
+ for(const p of cars){const w=760/p.z,x=p.x,y=p.y;
+   poly([[x-w,y],[x-w*.94,y-w*.47],[x-w*.59,y-w*.87],[x+w*.57,y-w*.87],[x+w*.96,y-w*.46],[x+w,y]],'#7664ae');
+   poly([[x-w*.72,y-w*.47],[x-w*.51,y-w*.77],[x+w*.48,y-w*.77],[x+w*.73,y-w*.47]],'#212039');
+   c.fillStyle='#ff548a';for(const sign of [-1,1])c.fillRect(x+sign*w*.72-w*.16,y-w*.35,w*.32,w*.12);
+   c.fillStyle='#fff';c.font='bold 15px system-ui';c.textAlign='center';c.fillText(placement(drivers[p.i],p.i)+' '+racerTitle(drivers[p.i]),x,y-w-8);
+ }
+ c.textAlign='left';el('telemetry').textContent='Chasing '+racerTitle(drivers[focus])+' · estimated from race progress';
+}
 function paint(){
  cancelAnimationFrame(cameraFrame);
  const c=el('scene').getContext('2d'); c.clearRect(0,0,1280,720);
@@ -151,6 +191,11 @@ function paint(){
    return closed?((value%1)+1)%1:value;
  });
  for(const key of motion.keys())if(!seen.has(key))motion.delete(key);
+ if(el('cameraMode').value==='chase'){
+   sunsetChase(c,positions);cameraTick=now;
+   if(moving&&!el('livePage').hidden)cameraFrame=requestAnimationFrame(paint);
+   return;
+ }
  const xs=route.map(p=>p[0]),ys=route.map(p=>p[1]);
  const bounds=values=>values.reduce(([lo,hi],v)=>[Math.min(lo,v),Math.max(hi,v)],[Infinity,-Infinity]);
  const [xmin,xmax]=bounds(xs),[ymin,ymax]=bounds(ys),cx=(xmin+xmax)/2,cy=(ymin+ymax)/2;
@@ -315,7 +360,7 @@ async function render(){
  const summary=races[Number(el('race').value)];
  const raceKey=summary?.raceId??summary?.race_id??summary?.id??summary?.trackName??null;
  if(raceKey!==selectedKey){
-   selectedKey=raceKey;retryGraphAt=0;el('copyRace').textContent='Copy race diagnostics';el('raceDiagnosticText').hidden=true;el('missingTrack').hidden=true;el('bindId').value='';el('bindStatus').textContent='';lastTrack='';drivers=[];draw('');el('order').replaceChildren();
+   selectedKey=raceKey;leaderEvidence='';el('leaderNote').textContent='';retryGraphAt=0;el('copyRace').textContent='Copy race diagnostics';el('raceDiagnosticText').hidden=true;el('missingTrack').hidden=true;el('bindId').value='';el('bindStatus').textContent='';lastTrack='';drivers=[];draw('');el('order').replaceChildren();
    el('empty').textContent=summary?'Loading standings…':'Waiting for a live race.';
    el('mapStatus').textContent=summary?'Finding this race’s circuit…':'Waiting for a live race.';
  }
@@ -328,12 +373,12 @@ async function render(){
      if(version!==selectionVersion)return;diagnostics.detail=raw;
      const data=raw.data??raw;
      const detail=data.race??data.races?.[0]??(Array.isArray(data)?data[0]:data);
-     race={...summary,...data,...detail};
+     detailRoster=detail;detailEnvelope=data;race={...summary,...data,...detail};
    }catch(error){if(version===selectionVersion)diagnostics.detailError=error.message}
    if(version!==selectionVersion)return;
  }
  const rosterKeys=['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players'];
- const order=list(race,rosterKeys);
+ const order=list(detailRoster,rosterKeys)??list(detailEnvelope,rosterKeys)??list(summary,rosterKeys);
  const entries=runningOrder(order);
  drivers=entries??[];
  const first=drivers[0],active=drivers.filter(d=>!retired(d));
@@ -386,7 +431,7 @@ async function refresh(){
  if(!races.length)el('race').add(new Option('No active races',''));
  el('race').disabled=!races.length;el('race').selectedIndex=Math.max(0,races.findIndex(r=>key(r)===previous));
  await render();if(ticket!==generation)return;el('status').textContent=demo?'Demo · Sample race':races.length+' active | Updated '+new Date().toLocaleTimeString();
- }catch(e){if(ticket===generation)el('status').textContent='Live update unavailable · '+e.message+(races.length?' · Showing last update':'')}
+ }catch(e){if(ticket===generation){leaderEvidence='';if(drivers.length){el('leaderNote').textContent='Last known order · current leader unconfirmed';const badge=el('order').querySelector('.rank');if(badge&&!retired(drivers[0]))badge.textContent='1*';paint()}el('status').textContent='Live update unavailable · '+e.message}}
  finally{if(ticket===generation&&!demo)timer=setTimeout(refresh,5000)}
 }
 el('mode').onclick=()=>{generation++;clearTimeout(timer);demo=!demo;races=[];lastTrack='';draw('');el('race').replaceChildren(new Option('Waiting for races',''));el('race').disabled=true;render();el('mode').textContent=demo?'Return to live':'Preview demo';el('status').textContent='Connecting.';refresh()};
