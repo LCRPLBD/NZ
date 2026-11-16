@@ -34,8 +34,7 @@ function gap(me,other){
  if(latest){
    const {key,ours,theirs}=latest;
    const delta=(theirs[0]+theirs[1]-ours[0]-ours[1])/2000;
-   const overlap=Math.min(ours[1],theirs[1])>Math.max(ours[0],theirs[0]);
-   return {text:overlap?'Too close to call':'≈ '+Math.abs(delta).toFixed(0)+'s '+(delta>0?'ahead':'behind'),ref:'L'+key.replace('/',' · CP '),delta:overlap?0:delta};
+   return {text:'≈ '+Math.abs(delta).toFixed(2)+'s'+(delta>0?' ahead':delta<0?' behind':''),ref:'L'+key.replace('/',' · CP '),delta};
  }
  if(me.mark&&other.mark){
  const laps=me.mark.lap-other.mark.lap,diff=laps||me.mark.cp-other.mark.cp;
@@ -43,16 +42,48 @@ function gap(me,other){
  }
  return {text:'Awaiting split',ref:'',delta:0};
 }
+function raceFlag(v){return v===true||v===1||v==='true'}
+function retired(d){return raceFlag(d?.dnf)}
+function rankField(d){return Number(d?.position??d?.rank??d?.place)}
+function runningOrder(rows){
+ if(!rows)return rows;
+ const classified=rows.filter(d=>!retired(d)),out=Array(classified.length).fill(null),used=new Set();
+ const ranks=classified.map(rankField);
+ const leaders=classified.map((d,i)=>raceFlag(d?.isLeader??d?.is_leader)?i:-1).filter(i=>i>=0);
+ // Completed classifications take precedence over a lingering live leader flag.
+ if(leaders.length===1&&!classified.some(d=>raceFlag(d?.finished))){
+   out[0]=classified[leaders[0]];used.add(leaders[0]);
+ }
+ classified.forEach((d,i)=>{
+   const rank=ranks[i];
+   if(!used.has(i)&&Number.isInteger(rank)&&rank>0&&rank<=out.length&&ranks.indexOf(rank)===ranks.lastIndexOf(rank)&&out[rank-1]===null){
+     out[rank-1]=d;used.add(i);
+   }
+ });
+ const remaining=classified.filter((_,i)=>!used.has(i));
+ const numeric=v=>v!=null&&v!==''&&Number.isFinite(Number(v))?Number(v):-1;
+ const lap=d=>numeric(d?.lap??d?.currentLap);
+ const cp=d=>numeric(d?.checkpoint??d?.currentCheckpoint??d?.checkpointIndex);
+ const progress=d=>numeric(d?.lapProgress??d?.trackProgress??d?.progress);
+ remaining.sort((a,b)=>{
+   const af=raceFlag(a?.finished),bf=raceFlag(b?.finished);
+   if(af||bf)return Number(bf)-Number(af);
+   return lap(b)-lap(a)||cp(b)-cp(a)||progress(b)-progress(a);
+ });
+ let cursor=0;
+ return out.map(d=>d??remaining[cursor++]).concat(rows.filter(retired));
+}
+
 function update(id,title,rows,now){
+ rows=runningOrder(rows.filter(d=>!retired(d)));
  if(active!==id){history.clear();since=now;active=id}
- const states=rows.map(d=>observe(d,now)),idx=rows.findIndex(mine);if(idx<0)return;
- const rivals=rows.map((d,i)=>({d,s:states[i]})).filter((_,i)=>i!==idx);
- const page=Math.floor((now-since)/10000)%Math.max(1,Math.ceil(rivals.length/5));
- el('title').textContent=title;el('page').textContent=(demo?'DEMO · ':'')+(rivals.length>5?(page+1)+'/'+Math.ceil(rivals.length/5):'');
+ const states=rows.map(d=>observe(d,now)),idx=rows.findIndex(mine);if(idx<0){el('card').hidden=true;return}
+ const rivals=rows.map((d,i)=>({d,s:states[i],i})).filter(({i})=>i!==idx&&i>=idx-2&&i<=idx+1);
+ el('title').textContent=title;el('page').textContent=demo?'DEMO':'';
  const box=el('rows');box.replaceChildren();
- for(const {d,s} of rivals.slice(page*5,page*5+5)){
+ for(const {d,s,i} of rivals){
  const g=gap(states[idx],s),line=document.createElement('div'),name=document.createElement('b'),value=document.createElement('strong'),ref=document.createElement('small');
- name.textContent=racerTitle(d);value.textContent=g.text;value.className=g.delta>0?'ahead':g.delta<0?'behind':'';ref.textContent=g.ref==='Latest report'?'':g.ref.replace(' · CP ','/CP');
+ name.textContent='P'+(i+1)+'  '+racerTitle(d);value.textContent=g.text;value.className=g.delta>0?'ahead':g.delta<0?'behind':'';ref.textContent=g.ref==='Latest report'?'':g.ref.replace(' · CP ','/CP');
  line.append(name,value,ref);box.append(line);
  }
  if(!rivals.length)box.textContent='Waiting for opponents';
