@@ -5,14 +5,14 @@
 *{box-sizing:border-box}body{margin:0;background:#0d1015;color:#f3f4f7;font:16px/1.5 system-ui,sans-serif}main,header{max-width:1150px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #323841}header strong{font-style:italic;letter-spacing:.09em}button,select,input{font:inherit;background:#202630;color:inherit;border:1px solid #49515d;border-radius:7px;padding:8px 12px}button{cursor:pointer}h1{font-size:clamp(32px,6vw,68px);letter-spacing:-.06em;margin:20px 0}h2{font-size:20px;margin:0 0 16px}section{background:#171c23;border:1px solid #303741;border-radius:12px;padding:22px}article{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;margin-top:18px}label{display:block;color:#b5bfca;margin-bottom:6px}#status{color:#95e6d8}ol{padding-left:2em}li{padding:8px;border-bottom:1px solid #343944}svg{width:100%;height:280px;background:#10151c;border-radius:8px}form{display:flex;gap:8px;flex-wrap:wrap}input{width:12em}small{color:#b5bfca}@media(max-width:700px){article{grid-template-columns:1fr}main,header{padding:16px}}
 header{border:0}header strong{color:#92f4de;letter-spacing:.16em}body{background:radial-gradient(ellipse at 80% 0,#25243d 0,transparent 45%),#0d1015;min-height:100vh}nav{display:flex;overflow:auto;gap:7px;padding:0 24px 12px;max-width:1150px;margin:auto;border-bottom:1px solid #38414a}nav a{white-space:nowrap;padding:8px 13px;border-radius:5px;color:#c6ccd6;text-decoration:none}nav a[aria-current]{background:#96f5db;color:#101b1a;font-weight:700}.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px}.field,details{background:#202730;border-radius:6px;padding:12px;margin:6px 0;overflow-wrap:anywhere}.field small{display:block;color:#9faebf}.scroll{overflow:auto}table{width:100%;border-collapse:collapse}td,th{padding:10px;text-align:left;border-bottom:1px solid #39414c;vertical-align:top}th{color:#a6bac6}summary{cursor:pointer}#query{margin:14px 0}#report{min-height:130px}#rail{display:flex;align-items:center;gap:12px;flex-wrap:wrap}#pageStatus{color:#94dfcf}[hidden]{display:none!important}</style>
 <header><strong>NIGHTZOOM</strong><button id="mode">Preview demo</button></header><nav aria-label="Racing sections" id="nav"></nav>
-<main id="livePage"><h1>Race control</h1><p role="status" id="status">Connecting to NightZoom.</p>
+<main id="livePage"><h1>Live race</h1><p role="status" id="status">Connecting to NightZoom.</p>
 <label for="race">Race</label><select id="race" disabled><option>Waiting for races</option></select>
 <article><section><h2>Running order</h2><ol id="order"></ol><p id="empty"></p></section>
-<section><h2>Track map</h2><form id="lookup"><input id="track" aria-label="Track ID" placeholder="Track ID, e.g. NZ-4710" required><button>Load map</button></form><p id="mapStatus" role="status"></p><svg id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
+<section><h2>3D race view</h2><form id="lookup"><input id="track" aria-label="Track ID" placeholder="Track ID, e.g. NZ-4710" required><button>Load map</button></form><p id="mapStatus" role="status"></p><canvas id="scene" width="760" height="450" style="width:100%;background:#101923;border-radius:8px" aria-label="Three-dimensional race circuit"></canvas><label>Camera angle <input id="orbit" type="range" min="-180" max="180" value="-25"></label><small id="telemetry"></small><svg style="display:none" id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
 <main id="other" hidden><h1 id="title"></h1><div id="rail"><button id="reload">Refresh</button><span id="pageStatus" role="status"></span></div><form id="query" hidden><input id="identifier" required><button id="submitLookup">Open</button></form><section id="report"></section></main><script>
 const el=id=>document.getElementById(id);
 const api='https://api.bjj-dev.net/v1/racing/';
-const demoRace={raceId:'sample',trackName:'Docklands Sprint',trackId:'DEMO',standings:[{name:'Neptune'},{name:'Apex'},{name:'Luna'}]};
+const demoRace={raceId:'sample',trackName:'Docklands Sprint',trackId:'DEMO',standings:[{name:'Neptune',progress:.75},{name:'Apex',progress:.50},{name:'Luna',progress:.35}]};
 let demo=false,races=[],generation=0,mapVersion=0,timer,lastTrack='';
 async function read(route){
  const response=await fetch(api+route,{credentials:'omit',signal:AbortSignal.timeout(8000)});
@@ -24,7 +24,52 @@ function list(value,keys){
  for(const key of keys)if(Array.isArray(value?.[key]))return value[key];
  return null;
 }
+let route=[],drivers=[];
+function paint(){
+ const c=el('scene').getContext('2d'); c.clearRect(0,0,760,450);
+ if(route.length<2){el('telemetry').textContent='';return}
+ const a=Number(el('orbit').value)*Math.PI/180,cs=Math.cos(a),sn=Math.sin(a);
+ const xs=route.map(p=>p[0]),ys=route.map(p=>p[1]);
+ const bounds=values=>values.reduce(([lo,hi],v)=>[Math.min(lo,v),Math.max(hi,v)],[Infinity,-Infinity]);
+ const [xmin,xmax]=bounds(xs),[ymin,ymax]=bounds(ys),cx=(xmin+xmax)/2,cy=(ymin+ymax)/2;
+ const scale=570/Math.max(1,Math.hypot(xmax-xmin,ymax-ymin)),faces=[];
+ function project([x,y,z]){
+   x=(x-cx)*scale;y=(y-cy)*scale;
+   const lateral=x*cs-y*sn,depth=x*sn+y*cs, factor=1000/(1000+depth*.8-z*.6);
+   return [380+lateral*factor,225-(depth*.55+z*.83)*factor,depth*.83-z*.55];
+ }
+ function face(points,color){const p=points.map(project);faces.push({p,color,d:p.reduce((s,q)=>s+q[2],0)/p.length})}
+ const segments=[];let length=0;
+ for(let i=1;i<route.length;i++){
+   const [x,y]=route[i-1],[ex,ey]=route[i],dx=ex-x,dy=ey-y,len=Math.hypot(dx,dy);
+   if(!len)continue;
+   const ux=dx/len,uy=dy/len;
+   const point=(s,t,z)=>[x+ux*s-uy*t/scale,y+uy*s+ux*t/scale,z];
+   const plane=(s,e,l,r,z,color)=>face([point(s,l,z),point(e,l,z),point(e,r,z),point(s,r,z)],color);
+   plane(0,len,-8,8,0,'#687b8e');
+   for(const t of [-8,8]){face([point(0,t,0),point(len,t,0),point(len,t,-7),point(0,t,-7)],'#314556');plane(0,len,t-.6,t+.6,.2,'#92e4d2')}
+   segments.push({start:length,end:length+len,point});length+=len;
+ }
+ let count=0;
+ for(const [i,d] of drivers.entries()){
+   const fraction=d?.lapProgress??d?.trackProgress??d?.progress;
+   if(typeof fraction!=='number'||fraction<0||fraction>1)continue;
+   const pos=fraction*length,seg=segments.find(s=>s.end>=pos);if(!seg)continue;
+   const base=pos-seg.start,point=(s,t,z)=>seg.point(base+s/scale,t,z);
+   function box(l,w,b,t,color){
+     const ring=z=>[point(-l,-w,z),point(l,-w,z),point(l,w,z),point(-l,w,z)];
+     const low=ring(b),high=ring(t);
+     for(let j=0;j<4;j++){const k=(j+1)%4;face([low[j],low[k],high[k],high[j]],color)}
+     face(high,color);
+   }
+   box(7,3.7,1,4,['#a998ff','#72e9cf','#ffae66','#e782ba'][i%4]);box(3.5,2.9,4,7,'#a2bfd0');count++;
+ }
+ for(const {p,color} of faces.sort((a,b)=>b.d-a.d)){c.fillStyle=color;c.beginPath();p.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();c.fill()}
+ el('telemetry').textContent=count?count+' cars positioned on track':'Track only · racer progress unavailable';
+}
+el('orbit').oninput=paint;
 async function draw(id){
+ route=[];paint();
  const ticket=++mapVersion;
  el('outline').removeAttribute('d');
  el('mapStatus').textContent=id?'Loading map.':'Enter a track ID to view its route.';
@@ -35,6 +80,7 @@ async function draw(id){
  const points=graph.points.map(p=>Array.isArray(p)?p:[p.x,p.y]);
  if(points.length<2||points.some(p=>!p.every(Number.isFinite)))throw Error('Unsupported track data');
  if(ticket!==mapVersion)return;
+ route=graph.loop?[...points,points[0]]:points;paint();
  el('outline').setAttribute('d',points.map(([x,y],i)=>(i?'L':'M')+x+' '+(1000-y)).join(' ')+(graph.loop?' Z':''));
  el('mapStatus').textContent=id+(graph.loop?' · Circuit':' · Point to point');
  }catch(e){if(ticket===mapVersion)el('mapStatus').textContent='Map unavailable · '+e.message}
@@ -55,7 +101,7 @@ async function render(){
    if(version!==selectionVersion)return;
  }
  const entries=list(race,['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players']);
- el('order').replaceChildren();
+ drivers=entries??[];paint();el('order').replaceChildren();
  el('empty').textContent=!race?'Waiting for a live race.':!entries?'Running order unavailable for this response.':entries.length?'':'Waiting for the starting order.';
  for(const driver of entries??[]){const row=document.createElement('li');row.textContent=typeof driver==='string'?driver:driver?.driverName??driver?.racer_name??driver?.characterName??driver?.displayName??driver?.racerName??driver?.name??driver?.alias??'Unnamed racer';el('order').append(row)}
  const track=String(race?.trackId??race?.track_id??race?.track?.trackId??race?.track?.id??(/^NZ-/i.test(race?.track)?race.track:''));
@@ -82,7 +128,7 @@ el('race').onchange=render;
 el('lookup').onsubmit=e=>{e.preventDefault();draw(el('track').value.trim())};
 draw('');
 
-const pages={live:'Live races',available:'Lobby',tracks:'Tracks',tournaments:'Tournaments',stats:'Statistics',health:'API status',races:'Authorized races'};
+const pages={live:'Live race',available:'Lobby',tracks:'Tracks',tournaments:'Tournaments',stats:'Statistics',health:'API status',races:'Authorized races'};
 const element=(tag,text)=>{const node=document.createElement(tag);if(text!=null)node.textContent=text;return node};
 const label=k=>String(k).replace(/_/g,' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/^./,c=>c.toUpperCase());
 function showData(data){
@@ -136,7 +182,7 @@ async function loadPage(){
  const g=result.data?.graph??result.graph??result.data??result;
  const coords=g.points.map(p=>Array.isArray(p)?p:[p.x,p.y]);
  if(coords.length<2||coords.some(p=>!Number.isFinite(p[0])||!Number.isFinite(p[1])))throw Error('Invalid track geometry');
- const svg=el('map').cloneNode(true);svg.removeAttribute('id');const path=svg.querySelector('path');path.removeAttribute('id');path.setAttribute('d',coords.map(([x,y],i)=>(i?'L':'M')+x+' '+(1000-y)).join(' ')+(g.loop?' Z':''));
+ const svg=el('map').cloneNode(true);svg.removeAttribute('id');svg.removeAttribute('style');const path=svg.querySelector('path');path.removeAttribute('id');path.setAttribute('d',coords.map(([x,y],i)=>(i?'L':'M')+x+' '+(1000-y)).join(' ')+(g.loop?' Z':''));
  el('report').append(element('h2',id),svg,element('p',(g.loop?'Circuit':'Point to point')+' · '+(g.checkpointAt?.length??0)+' checkpoints'));
  }else el('report').append(showData(result.data??result));
  el('pageStatus').textContent='Updated '+new Date().toLocaleTimeString();
