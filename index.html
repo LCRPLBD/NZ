@@ -117,9 +117,28 @@ function roundRoute(points,loop){
 let cameraPose=null,cameraFrame=0,cameraTick=0;
 let orbitAngle=null;
 const motion=new Map();
-function easedPosition(state,time){
- const t=Math.max(0,Math.min(1,(time-state.start)/1200));
- return state.from+(state.to-state.from)*t*t*(3-2*t);
+function estimatedDistance(s,time){
+ const age=Math.max(0,time-s.start);
+ const predicted=Math.min(s.limit,s.anchor+s.speed*age);
+ const correction=(s.from-s.anchor)*Math.exp(-age/650);
+ return Math.min(s.limit,predicted+correction);
+}
+function racerMotion(s,raw,now,d,loop,marks){
+ const halted=retired(d)||raceFlag(d?.finished);
+ const lap=Number(d?.lap??d?.currentLap);
+ if(s&&s.raw===raw&&s.halted===halted&&Object.is(s.lap,lap))return s;
+ let anchor=raw;
+ if(loop&&s){
+   anchor=Math.floor(s.anchor)+raw;
+   if(anchor<s.anchor-.5||(lap>s.lap&&raw<=s.raw))anchor+=1;
+ }
+ const next=marks.find(v=>Number.isFinite(v)&&v>raw+.000001);
+ const spacing=Number.isFinite(next)?next-raw:Math.min(1-raw,.035);
+ const limit=halted?anchor:anchor+Math.max(0,spacing)*.94;
+ const dt=s?now-s.start:0,advance=s?anchor-s.anchor:0;
+ const measured=dt>=400&&advance>0?advance/dt:0;
+ const speed=halted?0:measured?(s?.measured?s.speed*.35+measured*.65:measured):s?.speed??spacing/7000;
+ return {raw,lap,halted,start:now,from:s?estimatedDistance(s,now):anchor,anchor,limit,speed:Math.min(Math.max(0,speed),.00015),measured:!!(measured||s?.measured)};
 }
 function packWindow(fractions,loop){
  const sorted=fractions.filter(v=>Number.isFinite(v)&&v>=0&&v<=1).sort((a,b)=>a-b);
@@ -232,17 +251,11 @@ function paint(){
  const positions=drivers.map(d=>{
    const raw=locationOnTrack(d),key=d?.driverId??d?.racerId??racerTitle(d);
    if(!Number.isFinite(raw)||raw<0||raw>1)return undefined;
-   seen.add(key);let state=motion.get(key);
-   if(!state||reduce)state={from:raw,to:raw,start:now,raw};
-   else if(state.raw!==raw){
-     const from=easedPosition(state,now),previous=((from%1)+1)%1;
-     let step=raw-previous;
-     if(closed&&step<-.5)step+=1;
-     state={from,to:closed?from+step:raw,start:now,raw};
-   }
+   seen.add(key);
+   const state=racerMotion(motion.get(key),raw,now,d,closed,checkpoints);
    motion.set(key,state);
-   const value=easedPosition(state,now);
-   if(Math.abs(state.to-value)>.00001)moving=true;
+   const value=reduce?raw:estimatedDistance(state,now);
+   if(!reduce&&Math.abs(estimatedDistance(state,now+100)-value)>.000001)moving=true;
    return closed?((value%1)+1)%1:value;
  });
  for(const key of motion.keys())if(!seen.has(key))motion.delete(key);
@@ -331,7 +344,7 @@ function paint(){
  for(const {p,text} of labels){if(p[0]<0||p[0]>1280||p[1]<0||p[1]>720)continue;const width=c.measureText(text).width+10,x=Math.min(1276-width,Math.max(3,p[0]-width/2));let y=Math.max(19,p[1]-4);
  while(occupied.some(b=>x<b.x+b.width&&x+width>b.x&&Math.abs(b.y-y)<17)&&y>20)y-=17;
  occupied.push({x,y,width});c.fillStyle='#101927';c.fillRect(x,y-14,width,16);c.fillStyle='#ecfff9';c.fillText(text,x+5,y-2)}
- el('telemetry').textContent=count?count+' cars positioned on track':'Track only · racer progress unavailable';
+ el('telemetry').textContent=count?count+' cars · motion estimated between updates':'Track only · racer progress unavailable';
 }
 el('cameraMode').onchange=paint;
 el('orbit').oninput=paint;
