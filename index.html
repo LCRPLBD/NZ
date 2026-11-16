@@ -3,7 +3,7 @@
 <title>NightZoom · Race Control</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#0d1015;color:#f3f4f7;font:16px/1.5 system-ui,sans-serif}main,header{max-width:1150px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #323841}header strong{font-style:italic;letter-spacing:.09em}button,select,input{font:inherit;background:#202630;color:inherit;border:1px solid #49515d;border-radius:7px;padding:8px 12px}button{cursor:pointer}h1{font-size:clamp(32px,6vw,68px);letter-spacing:-.06em;margin:20px 0}h2{font-size:20px;margin:0 0 16px}section{background:#171c23;border:1px solid #303741;border-radius:12px;padding:22px}article{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;margin-top:18px}label{display:block;color:#b5bfca;margin-bottom:6px}#status{color:#95e6d8}ol{padding-left:2em}li{padding:8px;border-bottom:1px solid #343944}svg{width:100%;height:280px;background:#10151c;border-radius:8px}form{display:flex;gap:8px;flex-wrap:wrap}input{width:12em}small{color:#b5bfca}@media(max-width:700px){article{grid-template-columns:1fr}main,header{padding:16px}}
-header{border:0}header strong{color:#92f4de;letter-spacing:.16em}body{background:radial-gradient(ellipse at 80% 0,#25243d 0,transparent 45%),#0d1015;min-height:100vh}nav{display:flex;overflow:auto;gap:7px;padding:0 24px 12px;max-width:1150px;margin:auto;border-bottom:1px solid #38414a}nav a{white-space:nowrap;padding:8px 13px;border-radius:5px;color:#c6ccd6;text-decoration:none}nav a[aria-current]{background:#96f5db;color:#101b1a;font-weight:700}.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px}.field,details{background:#202730;border-radius:6px;padding:12px;margin:6px 0;overflow-wrap:anywhere}.field small{display:block;color:#9faebf}.scroll{overflow:auto}table{width:100%;border-collapse:collapse}td,th{padding:10px;text-align:left;border-bottom:1px solid #39414c;vertical-align:top}th{color:#a6bac6}summary{cursor:pointer}#query{margin:14px 0}#report{min-height:130px}#rail{display:flex;align-items:center;gap:12px;flex-wrap:wrap}#pageStatus{color:#94dfcf}[hidden]{display:none!important}</style>
+header{border:0}header strong{color:#92f4de;letter-spacing:.16em}body{background:radial-gradient(ellipse at 80% 0,#25243d 0,transparent 45%),#0d1015;min-height:100vh}nav{display:flex;overflow:auto;gap:7px;padding:0 24px 12px;max-width:1150px;margin:auto;border-bottom:1px solid #38414a}nav a{white-space:nowrap;padding:8px 13px;border-radius:5px;color:#c6ccd6;text-decoration:none}nav a[aria-current]{background:#96f5db;color:#101b1a;font-weight:700}.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px}.field,details{background:#202730;border-radius:6px;padding:12px;margin:6px 0;overflow-wrap:anywhere}.field small{display:block;color:#9faebf}.scroll{overflow:auto}table{width:100%;border-collapse:collapse}td,th{padding:10px;text-align:left;border-bottom:1px solid #39414c;vertical-align:top}th{color:#a6bac6}summary{cursor:pointer}#query{margin:14px 0}#report{min-height:130px}#rail{display:flex;align-items:center;gap:12px;flex-wrap:wrap}#pageStatus{color:#94dfcf}[hidden]{display:none!important}header,nav,main{max-width:1340px}body{background:radial-gradient(ellipse at 85% 0,#242338,transparent 48%),#0a1018}header{padding-top:20px;padding-bottom:14px}nav{gap:3px;border-color:#283747}nav a{font-weight:600;font-size:14px}section{background:linear-gradient(150deg,#18232e,#101823);border-color:#2f4051;border-radius:16px}h1{font-size:clamp(38px,5vw,66px);letter-spacing:-.065em;margin-bottom:8px}button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid #95f3db}#order{list-style:none;counter-reset:place;padding:0}#order li{counter-increment:place;display:flex;gap:14px;align-items:center}#order li:before{content:'P' counter(place);color:#a6c3d6;font:600 13px monospace}#order li:first-child:before{color:#94f5dc}#scene{aspect-ratio:76/45}button:hover,nav a:hover{filter:brightness(1.18)}@media(min-width:800px){#livePage article{grid-template-columns:minmax(230px,.65fr) minmax(0,1.55fr)}} </style>
 <header><strong>NIGHTZOOM</strong><button id="mode">Preview demo</button></header><nav aria-label="Racing sections" id="nav"></nav>
 <main id="livePage"><h1>Live race</h1><p role="status" id="status">Connecting to NightZoom.</p>
 <label for="race">Race</label><select id="race" disabled><option>Waiting for races</option></select>
@@ -24,10 +24,18 @@ function list(value,keys){
  for(const key of keys)if(Array.isArray(value?.[key]))return value[key];
  return null;
 }
-let route=[],drivers=[];
+let route=[],drivers=[],checkpoints=[],closed=false;
+function driverName(d){return typeof d==='string'?d:d?.driverName??d?.racer_name??d?.characterName??d?.displayName??d?.racerName??d?.name??d?.alias??'Unnamed racer'}
+function placement(d,i){const p=Number(d?.position??d?.rank??d?.place);return Number.isInteger(p)&&p>0?p:i+1}
+function locationOnTrack(d){
+ const raw=d?.lapProgress??d?.trackProgress??d?.progress;
+ if(raw!=null&&raw!==''&&Number.isFinite(+raw)&&+raw>=0&&+raw<=1)return +raw;
+ const index=d?.checkpointIndex??(Number(d?.currentCheckpoint??d?.checkpoint)-1);
+ return checkpoints[index];
+}
 function paint(){
  const c=el('scene').getContext('2d'); c.clearRect(0,0,760,450);
- if(route.length<2){el('telemetry').textContent='';return}
+ if(route.length<2){el('telemetry').textContent=drivers.length?'Load the track to see driver positions.':'';return}
  const a=Number(el('orbit').value)*Math.PI/180,cs=Math.cos(a),sn=Math.sin(a);
  const xs=route.map(p=>p[0]),ys=route.map(p=>p[1]);
  const bounds=values=>values.reduce(([lo,hi],v)=>[Math.min(lo,v),Math.max(hi,v)],[Infinity,-Infinity]);
@@ -40,19 +48,34 @@ function paint(){
  }
  function face(points,color){const p=points.map(project);faces.push({p,color,d:p.reduce((s,q)=>s+q[2],0)/p.length})}
  const segments=[];let length=0;
+ const normals=route.slice(1).map(([x,y],i)=>{const dx=x-route[i][0],dy=y-route[i][1],len=Math.hypot(dx,dy);return [-dy/len,dx/len]});
+ const joints=route.map(([x,y],i)=>{
+   const prev=normals[i-1]??(closed?normals.at(-1):normals[0]);
+   const next=normals[i]??(closed?normals[0]:prev);
+   const nx=prev[0]+next[0],ny=prev[1]+next[1],den=nx*next[0]+ny*next[1];
+   const divisor=Math.max(den,Math.hypot(nx,ny)/2.5,.00001);
+   const offset=den<.00001?next:[nx/divisor,ny/divisor];
+   return (t,z)=>[x+t*offset[0]/scale,y+t*offset[1]/scale,z];
+ });
  for(let i=1;i<route.length;i++){
    const [x,y]=route[i-1],[ex,ey]=route[i],dx=ex-x,dy=ey-y,len=Math.hypot(dx,dy);
    if(!len)continue;
    const ux=dx/len,uy=dy/len;
    const point=(s,t,z)=>[x+ux*s-uy*t/scale,y+uy*s+ux*t/scale,z];
-   const plane=(s,e,l,r,z,color)=>face([point(s,l,z),point(e,l,z),point(e,r,z),point(s,r,z)],color);
-   plane(0,len,-8,8,0,'#687b8e');
-   for(const t of [-8,8]){face([point(0,t,0),point(len,t,0),point(len,t,-7),point(0,t,-7)],'#314556');plane(0,len,t-.6,t+.6,.2,'#92e4d2')}
+   const begin=joints[i-1],end=joints[i];
+   face([begin(-8,0),end(-8,0),end(8,0),begin(8,0)],'#53657b');
+   for(const t of [-8,8]){
+     face([begin(t,0),end(t,0),end(t,-7),begin(t,-7)],'#344355');
+     face([begin(t-.55,.2),end(t-.55,.2),end(t+.55,.2),begin(t+.55,.2)],'#92e4d2');
+   }
    segments.push({start:length,end:length+len,point});length+=len;
  }
+ const labels=[];
+ for(const fraction of checkpoints){if(!Number.isFinite(fraction))continue;const pos=fraction*length,s=segments.find(v=>v.end>=pos);if(!s)continue;
+ const at=pos-s.start;face([s.point(at,-7,.3),s.point(at+1/scale,-7,.3),s.point(at+1/scale,7,.3),s.point(at,7,.3)],'#cfbbff')}
  let count=0;
  for(const [i,d] of drivers.entries()){
-   const fraction=d?.lapProgress??d?.trackProgress??d?.progress;
+   const fraction=locationOnTrack(d);
    if(typeof fraction!=='number'||fraction<0||fraction>1)continue;
    const pos=fraction*length,seg=segments.find(s=>s.end>=pos);if(!seg)continue;
    const base=pos-seg.start,point=(s,t,z)=>seg.point(base+s/scale,t,z);
@@ -62,9 +85,13 @@ function paint(){
      for(let j=0;j<4;j++){const k=(j+1)%4;face([low[j],low[k],high[k],high[j]],color)}
      face(high,color);
    }
-   box(7,3.7,1,4,['#a998ff','#72e9cf','#ffae66','#e782ba'][i%4]);box(3.5,2.9,4,7,'#a2bfd0');count++;
+   box(7,3.7,1,4,['#a998ff','#72e9cf','#ffae66','#e782ba'][i%4]);box(3.5,2.9,4,7,'#a2bfd0');labels.push({p:project(point(0,0,10)),text:'P'+placement(d,i)+' '+driverName(d)});count++;
  }
  for(const {p,color} of faces.sort((a,b)=>b.d-a.d)){c.fillStyle=color;c.beginPath();p.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();c.fill()}
+ c.font='bold 12px system-ui';const occupied=[];
+ for(const {p,text} of labels){const width=c.measureText(text).width+10,x=Math.min(756-width,Math.max(3,p[0]-width/2));let y=Math.max(19,p[1]-4);
+ while(occupied.some(b=>x<b.x+b.width&&x+width>b.x&&Math.abs(b.y-y)<17)&&y>20)y-=17;
+ occupied.push({x,y,width});c.fillStyle='#101927';c.fillRect(x,y-14,width,16);c.fillStyle='#ecfff9';c.fillText(text,x+5,y-2)}
  el('telemetry').textContent=count?count+' cars positioned on track':'Track only · racer progress unavailable';
 }
 el('orbit').oninput=paint;
@@ -80,7 +107,11 @@ async function draw(id){
  const points=graph.points.map(p=>Array.isArray(p)?p:[p.x,p.y]);
  if(points.length<2||points.some(p=>!p.every(Number.isFinite)))throw Error('Unsupported track data');
  if(ticket!==mapVersion)return;
- route=graph.loop?[...points,points[0]]:points;paint();
+ route=points.filter((p,i)=>!i||p[0]!==points[i-1][0]||p[1]!==points[i-1][1]);
+ closed=!!graph.loop;checkpoints=Array.isArray(graph.checkpointAt)?graph.checkpointAt:[];
+ if(route.length<2)throw Error('Track has no distinct points');
+ if(closed&&(route[0][0]!==route.at(-1)[0]||route[0][1]!==route.at(-1)[1]))route.push(route[0]);
+ paint();
  el('outline').setAttribute('d',points.map(([x,y],i)=>(i?'L':'M')+x+' '+(1000-y)).join(' ')+(graph.loop?' Z':''));
  el('mapStatus').textContent=id+(graph.loop?' · Circuit':' · Point to point');
  }catch(e){if(ticket===mapVersion)el('mapStatus').textContent='Map unavailable · '+e.message}
@@ -121,7 +152,7 @@ async function refresh(){
  el('race').disabled=!races.length;el('race').selectedIndex=Math.max(0,races.findIndex(r=>key(r)===previous));
  render();el('status').textContent=demo?'Demo · Sample race':races.length+' active | Updated '+new Date().toLocaleTimeString();
  }catch(e){if(ticket===generation)el('status').textContent='Live update unavailable · '+e.message+(races.length?' · Showing last update':'')}
- finally{if(ticket===generation&&!demo)timer=setTimeout(refresh,15000)}
+ finally{if(ticket===generation&&!demo)timer=setTimeout(refresh,5000)}
 }
 el('mode').onclick=()=>{generation++;clearTimeout(timer);demo=!demo;races=[];lastTrack='';el('track').value='';draw('');el('race').replaceChildren(new Option('Waiting for races',''));el('race').disabled=true;render();el('mode').textContent=demo?'Return to live':'Preview demo';el('status').textContent='Connecting.';refresh()};
 el('race').onchange=render;
