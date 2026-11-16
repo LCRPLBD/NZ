@@ -193,10 +193,11 @@ function trafficLayout(values,ids,loop,gap){
      if(lane===undefined)continue;
      occupied[lane].push(p);preferredLane.set(key,lane);out[i]={p,lane:slots[lane]};break;
    }
+   if(!out[i])out[i]={p:wrap(v),lane:slots[preferred]};
  });
  return out;
 }
-let sunsetSky;
+let sunsetSky,chaseDriver=null;
 function chaseSky(){
  const layer=document.createElement('canvas');layer.width=1280;layer.height=720;
  const g=layer.getContext('2d');
@@ -216,7 +217,9 @@ function chaseSky(){
 function sunsetChase(c,positions){
  sunsetSky??=chaseSky();c.drawImage(sunsetSky,0,0);
  function poly(points,color){c.fillStyle=color;c.beginPath();points.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();c.fill()}
- const focus=positions.findLastIndex((v,i)=>Number.isFinite(v)&&!retired(drivers[i]));
+ let focus=drivers.findIndex((d,i)=>racerTitle(d)===chaseDriver&&Number.isFinite(positions[i])&&!retired(d));
+ if(focus<0)focus=positions.findLastIndex((v,i)=>Number.isFinite(v)&&!retired(drivers[i]));
+ if(focus>=0)chaseDriver=racerTitle(drivers[focus]);
  if(focus<0){el('telemetry').textContent='Waiting for racer positions.';return}
  const dist=[0];for(let i=1;i<route.length;i++)dist.push(dist[i-1]+Math.hypot(route[i][0]-route[i-1][0],route[i][1]-route[i-1][1]));
  const total=dist.at(-1),unit=total/850;
@@ -230,21 +233,41 @@ function sunsetChase(c,positions){
  if(!traffic[focus])return;
  const s=traffic[focus].p*total,origin=point(s),ahead=point(s+unit*2);
  const dx=ahead[0]-origin[0],dy=ahead[1]-origin[1],len=Math.hypot(dx,dy)||1;
- function sample(at){
-   const p=point(at),x=(p[0]-origin[0])/unit,y=(p[1]-origin[1])/unit;
-   const z=11+(x*dx+y*dy)/len;
-   return {x:640+530*(x*dy-y*dx)/(len*z),y:398+1770/z,w:3150/z,z};
+ function cameraPoint(at,side=0){
+   const p=point(at),before=point(at-unit*.35),after=point(at+unit*.35);
+   const tx=after[0]-before[0],ty=after[1]-before[1],m=Math.hypot(tx,ty)||1;
+   const x=(p[0]-origin[0])/unit+side*4.2*ty/m,y=(p[1]-origin[1])/unit-side*4.2*tx/m;
+   return {u:(x*dy-y*dx)/len,z:11+(x*dx+y*dy)/len};
  }
- const palms=[];
- const roadIndex=Math.floor(s/unit);
- for(let i=180;i>=-11;i--){const k=roadIndex+i;
- if(!closed&&(k+1<0||k>850))continue;
- const a=sample(k*unit),b=sample((k+1)*unit);if(Math.min(a.z,b.z)<3)continue;
-   const strip=(l,r,color)=>poly([[a.x+l*a.w,a.y],[b.x+l*b.w,b.y],[b.x+r*b.w,b.y],[a.x+r*a.w,a.y]],color);
-   const fog=Math.min(1,18/a.z);
+ function projectRoad(p){return [640+530*p.u/p.z,398+1770/p.z]}
+ function sample(at,side=0){const p=cameraPoint(at,side),[x,y]=projectRoad(p);return {x,y,z:p.z,w:2226/p.z}}
+ function clipped(vertices){
+   const out=[];let prev=vertices.at(-1);
+   for(const v of vertices){
+     if((v.z>=3)!==(prev.z>=3)){const t=(3-prev.z)/(v.z-prev.z);out.push({u:prev.u+(v.u-prev.u)*t,z:3})}
+     if(v.z>=3)out.push(v);prev=v;
+   }
+   return out.map(projectRoad);
+ }
+ const palms=[],segments=[],roadIndex=Math.floor(s/unit);
+ for(let i=-18;i<=180;i++){
+   const k=roadIndex+i;if(!closed&&(k<0||k>=850))continue;
+   const left=cameraPoint(k*unit,-1),right=cameraPoint(k*unit,1);
+   const nextLeft=cameraPoint((k+1)*unit,-1),nextRight=cameraPoint((k+1)*unit,1);
+   if(Math.max(left.z,right.z,nextLeft.z,nextRight.z)<2)continue;
+   segments.push({k,left,right,nextLeft,nextRight,depth:(left.z+right.z+nextLeft.z+nextRight.z)/4});
+ }
+ for(const {k,left,right,nextLeft,nextRight} of segments.sort((a,b)=>b.depth-a.depth)){
+   const a=sample(k*unit);
+   const offset=(l,r,t)=>({u:l.u+(r.u-l.u)*(1+t)/2,z:l.z+(r.z-l.z)*(1+t)/2});
+   const strip=(l,r,color)=>{
+     const shape=clipped([offset(left,right,l),offset(nextLeft,nextRight,l),offset(nextLeft,nextRight,r),offset(left,right,r)]);
+     if(shape.length>=3)poly(shape,color);
+   };
+   const fog=Math.min(1,18/Math.max(3,a.z));
    strip(-1.1,1.1,'#51324e');strip(-1,1,'hsl(244 27% '+(38-23*fog)+'%)');
    strip(-.97,-.90,'rgba(245,94,181,.13)');strip(.90,.97,'rgba(100,222,255,.15)');
-   if(k%17===0){const side=(Math.abs(k/17)%2?1:-1);palms.push({x:a.x+side*a.w*1.4,y:a.y,size:1000/a.z,side})}
+   if(a.z>3&&k%17===0){const side=(Math.abs(k/17)%2?1:-1);palms.push({x:a.x+side*a.w*1.4,y:a.y,size:1000/a.z,side})}
    if(a.z<60){
      for(const side of [-1,1]){
        const t=side*(1.13+(Math.abs(k)%3)*.10);
@@ -254,7 +277,7 @@ function sunsetChase(c,positions){
    }
    if(k%3===0){strip(-1.07,-1.01,'#ff87bb');strip(1.01,1.07,'#99f9ff')}
    strip(-1,-.975,'#ff68c5');strip(.975,1,'#8bf0fb');
-   if(Math.floor(s/unit+i)%8<4)strip(-.009,.009,'#ac8dae');
+   if(k%8<4)strip(-.009,.009,'#ac8dae');
  }
  function palm(p){
    const {x,y,size:r,side}=p;c.save();c.translate(x,y);c.scale(r*side,r);
@@ -264,10 +287,10 @@ function sunsetChase(c,positions){
      c.lineWidth=.018;c.strokeStyle=j%2?'#bb6596':'#5eb7bb';c.stroke()}
    c.restore();
  }
- const cars=traffic.flatMap((slot,i)=>slot?[{...sample(slot.p*total),lane:slot.lane,i}]:[]).filter(p=>p.z>4&&p.z<145).sort((a,b)=>b.z-a.z);
+ const cars=traffic.flatMap((slot,i)=>slot?[{...sample(slot.p*total,slot.lane),lane:slot.lane,i}]:[]).filter(p=>p.z>4&&p.z<145).sort((a,b)=>b.z-a.z);
  function vehicle(p){
  const d=drivers[p.i],w=870/p.z;
- const x=p.x+p.lane*p.w,y=p.y;
+ const x=p.x,y=p.y;
  c.save();c.translate(x,y);c.scale(w,w);
  const panel=(v,col)=>poly(v,col);
  c.fillStyle='#080b1988';c.beginPath();c.ellipse(0,.04,1.12,.18,0,0,Math.PI*2);c.fill();
@@ -405,7 +428,7 @@ function paint(){
 el('cameraMode').onchange=paint;
 el('orbit').oninput=paint;
 async function draw(id){
- timingTrack=id;preferredLane.clear();route=[];motion.clear();cameraPose=null;paint();
+ timingTrack=id;preferredLane.clear();chaseDriver=null;route=[];motion.clear();cameraPose=null;paint();
  const ticket=++mapVersion;
  el('outline').removeAttribute('d');
  el('mapStatus').textContent=id?'Loading map.':'Enter a track ID to view its route.';
