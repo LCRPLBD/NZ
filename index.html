@@ -117,9 +117,30 @@ function roundRoute(points,loop){
 let cameraPose=null,cameraFrame=0,cameraTick=0;
 let orbitAngle=null;
 const motion=new Map();
+let timingTrack='';
+const splitKey='nightzoom.trackSplits.v1';
+let splitBook={};
+try{const saved=JSON.parse(localStorage.getItem(splitKey));if(saved&&typeof saved==='object'&&!Array.isArray(saved))splitBook=saved}catch{}
+let saveSplits=0;
+function flushSplits(){clearTimeout(saveSplits);saveSplits=0;try{localStorage.setItem(splitKey,JSON.stringify(splitBook))}catch{}}
+window.addEventListener('pagehide',()=>{if(saveSplits)flushSplits()});
+function recordSplit(key,ms){
+ if(ms<800||ms>90000||!Number.isFinite(ms))return;
+ const values=Array.isArray(splitBook[key])?splitBook[key]:[];
+ splitBook[key]=[...values.slice(-30),Math.round(ms)];
+ if(!saveSplits)saveSplits=setTimeout(flushSplits,1500);
+}
+function typicalSplit(key){
+ const values=splitBook[key];if(!Array.isArray(values)||!values.length)return 0;
+ const sorted=values.filter(v=>Number.isFinite(v)&&v>=800&&v<=90000).sort((a,b)=>a-b);
+ const m=Math.floor(sorted.length/2);return sorted.length?(sorted[m]+sorted[Math.floor((sorted.length-1)/2)])/2:0;
+}
 function estimatedDistance(s,time){
  const age=Math.max(0,time-s.start);
- const predicted=Math.min(s.limit,s.anchor+s.speed*age);
+ const span=s.limit-s.anchor;
+ const phase=span>0?s.speed*age/span:0;
+ const travel=phase<=.78?phase:1-.22*Math.exp(-Math.min(50,(phase-.78)/.22));
+ const predicted=s.anchor+span*travel;
  const correction=(s.from-s.anchor)*Math.exp(-age/650);
  return Math.min(s.limit,predicted+correction);
 }
@@ -134,11 +155,17 @@ function racerMotion(s,raw,now,d,loop,marks){
  }
  const next=marks.find(v=>Number.isFinite(v)&&v>raw+.000001);
  const spacing=Number.isFinite(next)?next-raw:Math.min(1-raw,.035);
- const limit=halted?anchor:anchor+Math.max(0,spacing)*.94;
+ const limit=halted?anchor:anchor+Math.max(0,spacing);
+ const mark=marks.indexOf(raw),eligible=!demo&&timingTrack&&mark>=0;
+ const key=eligible?JSON.stringify([timingTrack,loop,mark,raw,next??1]):'';
  const dt=s?now-s.start:0,advance=s?anchor-s.anchor:0;
  const measured=dt>=400&&advance>0?advance/dt:0;
- const speed=halted?0:measured?(s?.measured?s.speed*.35+measured*.65:measured):s?.speed??spacing/7000;
- return {raw,lap,halted,start:now,from:s?estimatedDistance(s,now):anchor,anchor,limit,speed:Math.min(Math.max(0,speed),.00015),measured:!!(measured||s?.measured)};
+ const consecutive=s&&advance>0&&(mark===s.mark+1||(loop&&s.mark===marks.length-1&&mark===0));
+ const observed=!!(eligible&&s&&!s.halted&&!halted&&advance>0&&dt>0&&dt<20000);
+ if(observed&&consecutive&&s.observed&&s.key)recordSplit(s.key,dt);
+ const historical=key?typicalSplit(key):0;
+ const speed=halted?0:historical?spacing/historical:measured?(s?.measured?s.speed*.35+measured*.65:measured):s?.speed??spacing/7000;
+ return {raw,lap,halted,key,mark,observed,start:now,from:s?estimatedDistance(s,now):anchor,anchor,limit,speed:Math.min(Math.max(0,speed),.00015),measured:!!(measured||s?.measured)};
 }
 function packWindow(fractions,loop){
  const sorted=fractions.filter(v=>Number.isFinite(v)&&v>=0&&v<=1).sort((a,b)=>a-b);
@@ -349,7 +376,7 @@ function paint(){
 el('cameraMode').onchange=paint;
 el('orbit').oninput=paint;
 async function draw(id){
- route=[];motion.clear();cameraPose=null;paint();
+ timingTrack=id;route=[];motion.clear();cameraPose=null;paint();
  const ticket=++mapVersion;
  el('outline').removeAttribute('d');
  el('mapStatus').textContent=id?'Loading map.':'Enter a track ID to view its route.';
