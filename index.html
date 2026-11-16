@@ -14,7 +14,7 @@ button,select,input{border-color:#384b60;background:#202e3e;border-radius:9px}#r
 <main id="livePage"><h1>Live race</h1><p role="status" id="status">Connecting to NightZoom.</p>
 <label for="race">Race</label><select id="race" disabled><option>Waiting for races</option></select>
 <article><section><h2>Running order</h2><ol id="order"></ol><p id="empty"></p></section>
-<section><h2 id="sceneTitle">3D race view</h2><p id="mapStatus" role="status"></p><details id="missingTrack" hidden><summary>Find this circuit</summary><p><a id="raceData" target="_blank" rel="noreferrer">Selected race data</a> · <a href="https://api.bjj-dev.net/v1/racing/tracks" target="_blank" rel="noreferrer">Track catalog</a></p><form id="bindTrack"><input id="bindId" aria-label="Track ID" placeholder="NZ-4710" required><button>Use track ID</button></form><small id="bindStatus"></small></details><canvas id="scene" width="760" height="450" style="width:100%;background:#101923;border-radius:8px" aria-label="Three-dimensional race circuit"></canvas><label>Camera angle <input id="orbit" type="range" min="-180" max="180" value="-25"></label><small id="telemetry"></small><svg style="display:none" id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
+<section><h2 id="sceneTitle">3D race view</h2><p id="mapStatus" role="status"></p><button hidden id="copyRace" type="button">Copy race diagnostics</button><textarea hidden readonly id="raceDiagnosticText" aria-label="Race diagnostics"></textarea><details id="missingTrack" hidden><summary>Find this circuit</summary><p><a id="raceData" target="_blank" rel="noreferrer">Selected race data</a> · <a href="https://api.bjj-dev.net/v1/racing/tracks" target="_blank" rel="noreferrer">Track catalog</a></p><form id="bindTrack"><input id="bindId" aria-label="Track ID" placeholder="NZ-4710" required><button>Use track ID</button></form><small id="bindStatus"></small></details><canvas id="scene" width="760" height="450" style="width:100%;background:#101923;border-radius:8px" aria-label="Three-dimensional race circuit"></canvas><label>Camera angle <input id="orbit" type="range" min="-180" max="180" value="-25"></label><small id="telemetry"></small><svg style="display:none" id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
 <main id="other" hidden><h1 id="title"></h1><div id="rail"><button id="reload">Refresh</button><span id="pageStatus" role="status"></span></div><form id="query" hidden><input id="identifier" required><button id="submitLookup">Open</button></form><section id="report"></section></main><script>
 const el=id=>document.getElementById(id);
 const api='https://api.bjj-dev.net/v1/racing/';
@@ -145,15 +145,25 @@ function catalogMatch(value,name){
  scan(value);return ids.size===1?[...ids][0]:'';
 }
 const manualTracks=new Map();
+let diagnostics={},retryGraphAt=0;
+el('copyRace').onclick=async()=>{
+ const output=JSON.stringify({...diagnostics,mapStatus:el('mapStatus').textContent},null,2);
+ try{await navigator.clipboard.writeText(output);el('copyRace').textContent='Diagnostics copied'}
+ catch{const box=el('raceDiagnosticText');box.hidden=false;box.value=output;box.select()}
+};
 async function resolveTrack(r,summary){
- const direct=trackIdOf(r)||trackIdOf(summary)||manualTracks.get(selectedKey);
+ const direct=manualTracks.get(selectedKey)||trackIdOf(r)||trackIdOf(summary);
  if(direct)return String(direct);
- const name=r?.trackName??r?.track?.name??summary?.trackName??r?.name;
+ const name=r?.trackName??r?.track?.name??summary?.trackName??r?.name??el('sceneTitle').textContent;
  if(typeof name!=='string'||!name.trim())return '';
  if(!catalog||Date.now()-catalogTime>60000){catalogTime=Date.now();catalog=read('tracks').catch(()=>null)}
- const found=catalogMatch(await catalog,name);
+ const payload=await catalog;
+ diagnostics.catalogKeys=Object.keys(payload??{}).slice(0,30);
+ diagnostics.catalogSample=JSON.stringify(payload)?.slice(0,1200);
+ const found=catalogMatch(payload,name);
  if(found)return found;
- const instance=String(summary?.raceId??summary?.race_id??summary?.id??'');
+ const embedded=[r?.id,summary?.id,r?.raceId,summary?.raceId,r?.race_id,summary?.race_id].filter(v=>typeof v==='string');
+ const instance=embedded.join(' ');
  return instance.match(/(?:^|[^a-z0-9])(NZ-\d+)(?=$|[^a-z0-9])/i)?.[1]??'';
 }
 el('bindTrack').onsubmit=async e=>{
@@ -162,7 +172,7 @@ el('bindTrack').onsubmit=async e=>{
  try{const raw=await read('tracks/'+encodeURIComponent(id)+'/graph');const g=raw.data?.graph??raw.graph??raw.data??raw;
  if(!Array.isArray(g.points)||g.points.length<2)throw Error('No track geometry');
  if(key!==selectedKey)return;manualTracks.set(key,id);lastTrack=id;await draw(id);
- if(key===selectedKey)el('missingTrack').hidden=false;
+ if(key===selectedKey){el('missingTrack').hidden=!!route.length;el('bindStatus').textContent=route.length?'Circuit loaded.':'Could not draw circuit.'}
  }catch(err){if(key===selectedKey)el('bindStatus').textContent=err.message}
 };
 async function render(){
@@ -170,20 +180,21 @@ async function render(){
  const summary=races[Number(el('race').value)];
  const raceKey=summary?.raceId??summary?.race_id??summary?.id??summary?.trackName??null;
  if(raceKey!==selectedKey){
-   selectedKey=raceKey;el('missingTrack').hidden=true;el('bindId').value='';el('bindStatus').textContent='';lastTrack='';drivers=[];draw('');el('order').replaceChildren();
+   selectedKey=raceKey;retryGraphAt=0;el('copyRace').textContent='Copy race diagnostics';el('raceDiagnosticText').hidden=true;el('missingTrack').hidden=true;el('bindId').value='';el('bindStatus').textContent='';lastTrack='';drivers=[];draw('');el('order').replaceChildren();
    el('empty').textContent=summary?'Loading standings…':'Waiting for a live race.';
    el('mapStatus').textContent=summary?'Finding this race’s circuit…':'Waiting for a live race.';
  }
  el('sceneTitle').textContent=summary?.trackName??summary?.track?.name??summary?.name??'3D race view';
- let race=summary;
+ diagnostics={summary,detail:null};let race=summary;
  const id=summary?.raceId??summary?.race_id??summary?.id;
  if(!demo && id!=null){
    try{
      const raw=await read('live/'+encodeURIComponent(id));
+     if(version!==selectionVersion)return;diagnostics.detail=raw;
      const data=raw.data??raw;
      const detail=data.race??data.races?.[0]??(Array.isArray(data)?data[0]:data);
      race={...summary,...data,...detail};
-   }catch{ /* Keep the public list entry when detail is unavailable. */ }
+   }catch(error){if(version===selectionVersion)diagnostics.detailError=error.message}
    if(version!==selectionVersion)return;
  }
  const entries=list(race,['leaderboard','positions','running_order','results','standings','runningOrder','order','racers','participants','drivers','entries','players']);
@@ -192,7 +203,11 @@ async function render(){
  for(const driver of entries??[]){const row=document.createElement('li');row.textContent=typeof driver==='string'?driver:driver?.driverName??driver?.racer_name??driver?.characterName??driver?.displayName??driver?.racerName??driver?.name??driver?.alias??'Unnamed racer';el('order').append(row)}
  const track=await resolveTrack(race,summary);
  if(version!==selectionVersion)return;
- if(track!==lastTrack){lastTrack=track;draw(track)}
+ if(track!==lastTrack||(track&&!route.length&&Date.now()>=retryGraphAt)){
+   lastTrack=track;retryGraphAt=Date.now()+30000;await draw(track);
+   if(version!==selectionVersion)return;
+ }
+ el('copyRace').hidden=!race||!!route.length;
  el('raceData').href=api+'live'+(id!=null?'/'+encodeURIComponent(id):'');
  el('missingTrack').hidden=!race||!!route.length;
  if(!track)el('mapStatus').textContent=race?'No matching circuit in the track catalog.':'Waiting for a live race.';
