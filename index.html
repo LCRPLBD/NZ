@@ -26,7 +26,7 @@ button,select,input{border-radius:3px;background:#23272a;border-color:#51575b}
 <main id="livePage"><h1>Live race</h1><p role="status" id="status">Connecting to NightZoom.</p>
 <label for="race">Race</label><select id="race" disabled><option>Waiting for races</option></select>
 <article><section><h2>Running order</h2><ol id="order"></ol><p id="empty"></p></section>
-<section><h2 id="sceneTitle">3D race view</h2><p id="mapStatus" role="status"></p><button hidden id="copyRace" type="button">Copy race diagnostics</button><textarea hidden readonly id="raceDiagnosticText" aria-label="Race diagnostics"></textarea><details id="missingTrack" hidden><summary>Find this circuit</summary><p><a id="raceData" target="_blank" rel="noreferrer">Selected race data</a> · <a href="https://api.bjj-dev.net/v1/racing/tracks" target="_blank" rel="noreferrer">Track catalog</a></p><form id="bindTrack"><input id="bindId" aria-label="Track ID" placeholder="NZ-4710" required><button>Use track ID</button></form><small id="bindStatus"></small></details><canvas id="scene" width="1280" height="720" style="width:100%;background:#101923;border-radius:8px" aria-label="Three-dimensional race circuit"></canvas><label>Camera angle <input id="orbit" type="range" min="-180" max="180" value="-25"></label><small id="telemetry"></small><svg style="display:none" id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
+<section><h2 id="sceneTitle">3D race view</h2><p id="mapStatus" role="status"></p><button hidden id="copyRace" type="button">Copy race diagnostics</button><textarea hidden readonly id="raceDiagnosticText" aria-label="Race diagnostics"></textarea><details id="missingTrack" hidden><summary>Find this circuit</summary><p><a id="raceData" target="_blank" rel="noreferrer">Selected race data</a> · <a href="https://api.bjj-dev.net/v1/racing/tracks" target="_blank" rel="noreferrer">Track catalog</a></p><form id="bindTrack"><input id="bindId" aria-label="Track ID" placeholder="NZ-4710" required><button>Use track ID</button></form><small id="bindStatus"></small></details><canvas id="scene" width="1280" height="720" style="width:100%;background:#101923;border-radius:8px" aria-label="Three-dimensional race circuit"></canvas><label>Camera <select id="cameraMode"><option value="pack">Follow pack</option><option value="all">Full circuit</option></select></label><label>Camera angle <input id="orbit" type="range" min="-180" max="180" value="-25"></label><small id="telemetry"></small><svg style="display:none" id="map" viewBox="-35 -35 1070 1070" aria-label="Track outline" role="img"><path id="outline" fill="none" stroke="#83efdc" stroke-width="12" stroke-linejoin="round" stroke-linecap="round"/></svg></section></article></main>
 <main id="other" hidden><h1 id="title"></h1><div id="rail"><button id="reload">Refresh</button><span id="pageStatus" role="status"></span></div><form id="query" hidden><input id="identifier" required><button id="submitLookup">Open</button></form><section id="report"></section></main><script>
 const el=id=>document.getElementById(id);
 const api='https://api.bjj-dev.net/v1/racing/';
@@ -74,7 +74,19 @@ function roundRoute(points,loop){
  if(loop)out.push(out[0]);
  return out.filter((p,i)=>!i||Math.hypot(p[0]-out[i-1][0],p[1]-out[i-1][1])>1e-7);
 }
+let cameraPose=null,cameraFrame=0,cameraTick=0;
+function packWindow(fractions,loop){
+ const sorted=fractions.filter(v=>Number.isFinite(v)&&v>=0&&v<=1).sort((a,b)=>a-b);
+ if(sorted.length<3)return sorted;
+ const size=Math.ceil(sorted.length*.7),pool=loop?sorted.concat(sorted.map(x=>x+1)):sorted;
+ let best=0;
+ for(let i=1;i<sorted.length&&i+size<=pool.length;i++){
+   if(pool[i+size-1]-pool[i]<pool[best+size-1]-pool[best])best=i;
+ }
+ return pool.slice(best,best+size).map(x=>x>1?x-1:x);
+}
 function paint(){
+ cancelAnimationFrame(cameraFrame);
  const c=el('scene').getContext('2d'); c.clearRect(0,0,1280,720);
  if(route.length<2){el('telemetry').textContent=drivers.length?'Waiting for circuit geometry.':'';return}
  const a=Number(el('orbit').value)*Math.PI/180,cs=Math.cos(a),sn=Math.sin(a);
@@ -83,10 +95,35 @@ function paint(){
  const [xmin,xmax]=bounds(xs),[ymin,ymax]=bounds(ys),cx=(xmin+xmax)/2,cy=(ymin+ymax)/2;
  const rotated=route.map(([x,y])=>[(x-cx)*cs-(y-cy)*sn,(x-cx)*sn+(y-cy)*cs]);
  const [left,right]=bounds(rotated.map(p=>p[0])),[back,front]=bounds(rotated.map(p=>p[1]));
- const scale=Math.min(1200/Math.max(1,right-left),625/Math.max(1,(front-back)*.70)),faces=[];
+ const overview=Math.min(1200/Math.max(1,right-left),625/Math.max(1,(front-back)*.70)),faces=[];
+ let target=[(left+right)/2,(back+front)/2,overview];
+ const pack=packWindow(drivers.map(locationOnTrack),closed);
+ const following=el('cameraMode').value==='pack'&&pack.length>0;
+ if(following){
+   const cumulative=[0];
+   for(let i=1;i<route.length;i++)cumulative.push(cumulative[i-1]+Math.hypot(route[i][0]-route[i-1][0],route[i][1]-route[i-1][1]));
+   const points=pack.map(f=>{
+     const distance=f*cumulative.at(-1);let i=1;
+     while(i<cumulative.length-1&&cumulative[i]<distance)i++;
+     const t=(distance-cumulative[i-1])/(cumulative[i]-cumulative[i-1]||1);
+     return rotated[i].map((v,k)=>rotated[i-1][k]+t*(v-rotated[i-1][k]));
+   });
+   const [l,r]=bounds(points.map(p=>p[0])),[b,t]=bounds(points.map(p=>p[1]));
+   target=[(l+r)/2,(b+t)/2,Math.min(overview*4,960/Math.max(1,r-l),460/Math.max(1,(t-b)*.7))];
+ }
+ const now=performance.now();
+ if(!cameraPose||!following||matchMedia('(prefers-reduced-motion: reduce)').matches)cameraPose=target;
+ else{
+   const blend=1-Math.exp(-Math.min(80,Math.max(8,now-cameraTick))/150);
+   cameraPose=cameraPose.map((v,i)=>v+(target[i]-v)*blend);
+   if(Math.hypot(cameraPose[0]-target[0],cameraPose[1]-target[1])*target[2]>.5||Math.abs(cameraPose[2]/target[2]-1)>.002)
+     cameraFrame=requestAnimationFrame(paint);
+ }
+ cameraTick=now;
+ const [focusX,focusY,scale]=cameraPose;
  function project([x,y,z]){
    const dx=x-cx,dy=y-cy,lateral=dx*cs-dy*sn,depth=dx*sn+dy*cs;
-   return [640+(lateral-(left+right)/2)*scale,372-(depth-(back+front)/2)*.70*scale-z*.72,depth*scale*.72-z*.70];
+   return [640+(lateral-focusX)*scale,372-(depth-focusY)*.70*scale-z*.72,depth*scale*.72-z*.70];
  }
  function face(points,color){const p=points.map(project);faces.push({p,color,d:p.reduce((s,q)=>s+q[2],0)/p.length})}
  const segments=[];let length=0;
@@ -131,14 +168,15 @@ function paint(){
  }
  for(const {p,color} of faces.sort((a,b)=>b.d-a.d)){c.fillStyle=color;c.beginPath();p.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.closePath();c.fill()}
  c.font='bold 12px system-ui';const occupied=[];
- for(const {p,text} of labels){const width=c.measureText(text).width+10,x=Math.min(1276-width,Math.max(3,p[0]-width/2));let y=Math.max(19,p[1]-4);
+ for(const {p,text} of labels){if(p[0]<0||p[0]>1280||p[1]<0||p[1]>720)continue;const width=c.measureText(text).width+10,x=Math.min(1276-width,Math.max(3,p[0]-width/2));let y=Math.max(19,p[1]-4);
  while(occupied.some(b=>x<b.x+b.width&&x+width>b.x&&Math.abs(b.y-y)<17)&&y>20)y-=17;
  occupied.push({x,y,width});c.fillStyle='#101927';c.fillRect(x,y-14,width,16);c.fillStyle='#ecfff9';c.fillText(text,x+5,y-2)}
  el('telemetry').textContent=count?count+' cars positioned on track':'Track only · racer progress unavailable';
 }
-el('orbit').oninput=paint;
+el('cameraMode').onchange=paint;
+el('orbit').oninput=()=>{cameraPose=null;paint()};
 async function draw(id){
- route=[];paint();
+ route=[];cameraPose=null;paint();
  const ticket=++mapVersion;
  el('outline').removeAttribute('d');
  el('mapStatus').textContent=id?'Loading map.':'Enter a track ID to view its route.';
