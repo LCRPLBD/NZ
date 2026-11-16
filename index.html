@@ -79,7 +79,17 @@ function runningOrder(rows){
      out[rank-1]=d;used.add(i);
    }
  });
- const remaining=classified.filter((_,i)=>!used.has(i));let cursor=0;
+ const remaining=classified.filter((_,i)=>!used.has(i));
+ const numeric=v=>v!=null&&v!==''&&Number.isFinite(Number(v))?Number(v):-1;
+ const lap=d=>numeric(d?.lap??d?.currentLap);
+ const cp=d=>numeric(d?.checkpoint??d?.currentCheckpoint??d?.checkpointIndex);
+ const progress=d=>numeric(d?.lapProgress??d?.trackProgress??d?.progress);
+ remaining.sort((a,b)=>{
+   const af=raceFlag(a?.finished),bf=raceFlag(b?.finished);
+   if(af||bf)return Number(bf)-Number(af);
+   return lap(b)-lap(a)||cp(b)-cp(a)||progress(b)-progress(a);
+ });
+ let cursor=0;
  return out.map(d=>d??remaining[cursor++]).concat(rows.filter(retired));
 }
 function locationOnTrack(d){
@@ -385,7 +395,7 @@ async function render(){
  const flagged=active.filter(d=>raceFlag(d?.isLeader??d?.is_leader));
  leaderEvidence=first&&flagged.length===1&&flagged[0]===first&&!active.some(d=>raceFlag(d?.finished))?'Leader flag':
  first&&rankField(first)===1&&active.filter(d=>rankField(d)===1).length===1?'Reported position':'';
- el('leaderNote').textContent=!first||retired(first)?'':leaderEvidence?'P1 confirmed by '+leaderEvidence.toLowerCase():'1* · First in feed order; leader unconfirmed';
+ el('leaderNote').textContent=!first||retired(first)?'':leaderEvidence?'P1 confirmed by '+leaderEvidence.toLowerCase()+' · Unranked racers ordered by progress; exact ties retain feed order':'1* · Estimated leader by race progress';
  paint();
  const opened=new Set([...el('order').querySelectorAll('details[open]')].map(node=>node.dataset.driver));
  el('order').replaceChildren();
